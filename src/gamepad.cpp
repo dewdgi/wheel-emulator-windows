@@ -123,13 +123,12 @@ bool GamepadDevice::Create() {
 }
 
 void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
-    // Direct linear steering: mouse movement directly controls steering
-    // No accumulation, no auto-centering - just direct mapping
-    // At 1000 DPI, 15cm = ~5905 pixels
-    // At sensitivity=50: full lock at ~15cm
-    // Formula: delta * sensitivity * 0.111 gives direct steering change
-    float delta_steering = delta * sensitivity * 0.111f;
-    steering += delta_steering;
+    // Pure linear steering: each pixel of mouse movement adds to steering
+    // sensitivity directly controls how many steering units per pixel
+    // At sensitivity=50: 50 units per pixel, full lock at 32768/50 = 655 pixels (~7cm at 1000 DPI)
+    // At sensitivity=25: 25 units per pixel, full lock at 32768/25 = 1310 pixels (~14cm at 1000 DPI)
+    // Completely linear scaling
+    steering += delta * static_cast<float>(sensitivity);
     
     // Clamp to int16_t range
     if (steering < -32768.0f) steering = -32768.0f;
