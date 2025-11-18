@@ -46,12 +46,14 @@ Startup:
   3. Create virtual gamepad (/dev/uinput)
   4. Discover keyboard (search for "keyboard" in device name)
   5. Discover mouse (search for REL_X capability)
-  6. Grab devices for exclusive access
+  6. Start with emulation disabled (devices NOT grabbed)
 
 Main Loop:
   1. Read keyboard events → update key map
   2. Read mouse events → accumulate delta_x
   3. Check for Ctrl+M toggle
+     - If toggled ON:  grab devices, enable emulation
+     - If toggled OFF: ungrab devices, disable emulation
   4. If enabled:
        - Update steering (accumulative, sensitivity-scaled)
        - Update throttle/brake (analog ramping)
@@ -63,7 +65,7 @@ Main Loop:
   6. Repeat
 
 Cleanup (Ctrl+C):
-  - Ungrab devices
+  - Ungrab devices (if grabbed)
   - Close file descriptors (RAII)
   - Exit
 
@@ -143,12 +145,19 @@ Buttons: BTN_A/B/X/Y, BTN_TL/TR (bumpers), BTN_SELECT/START
 
 MAIN LOOP (main.cpp)
 --------------------
+bool input_enabled = false;  // Start disabled
+
 while (true) {
     mouse_dx = 0;
     input.Read(mouse_dx);
     
-    if (input.CheckToggle())
+    if (input.CheckToggle()) {
         input_enabled = !input_enabled;
+        if (input_enabled)
+            input.Grab(true);   // Grab devices when enabling
+        else
+            input.Grab(false);  // Ungrab devices when disabling
+    }
     
     if (input_enabled) {
         gamepad.UpdateSteering(mouse_dx, config.sensitivity);

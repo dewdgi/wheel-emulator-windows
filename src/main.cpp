@@ -68,18 +68,6 @@ int main() {
     }
     std::cout << std::endl;
     
-    // Grab devices for exclusive access
-    input.Grab(true);
-    std::cout << std::endl;
-    
-    std::cout << "Controls:" << std::endl;
-    std::cout << "  Ctrl+M - Toggle emulation on/off" << std::endl;
-    std::cout << "  Ctrl+C - Exit" << std::endl;
-    std::cout << "  Mouse  - Steering" << std::endl;
-    std::cout << "  W      - Throttle" << std::endl;
-    std::cout << "  S      - Brake" << std::endl;
-    std::cout << "  Arrows - D-Pad" << std::endl;
-    std::cout << "  Q/E/F/G/H - Buttons (configurable)" << std::endl;
     std::cout << std::endl;
     std::cout << "Emulation is OFF. Press Ctrl+M to enable." << std::endl;
     std::cout << std::endl;
@@ -98,8 +86,10 @@ int main() {
             input_enabled = !input_enabled;
             if (input_enabled) {
                 std::cout << "Emulation ENABLED" << std::endl;
+                input.Grab(true);
             } else {
                 std::cout << "Emulation DISABLED" << std::endl;
+                input.Grab(false);
             }
         }
         
