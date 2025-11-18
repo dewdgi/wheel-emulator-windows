@@ -123,6 +123,11 @@ bool GamepadDevice::Create() {
 }
 
 void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
+    // Debug: print steering updates
+    if (delta != 0) {
+        std::cout << "UpdateSteering: delta=" << delta << ", sensitivity=" << sensitivity << std::endl;
+    }
+    
     // Linear steering: sensitivity is a direct multiplier (1-100%)
     // At 5% sensitivity: delta * 0.05, at 100%: delta * 1.0
     float delta_steering = delta * (sensitivity / 100.0f);
@@ -133,6 +138,11 @@ void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
     if (new_steering > 32767) new_steering = 32767;
     
     steering = static_cast<int16_t>(new_steering);
+    
+    // Debug: print final steering value when it changes
+    if (delta != 0) {
+        std::cout << "  New steering value: " << steering << std::endl;
+    }
 }
 
 void GamepadDevice::UpdateThrottle(bool pressed) {
