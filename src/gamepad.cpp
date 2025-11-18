@@ -95,10 +95,9 @@ static const uint8_t g29_hid_descriptor[] = {
     0x95, 0x01,        //   Report Count (1)
     0x81, 0x03,        //   Input (Const,Var,Abs)
     
-    // OUTPUT Report 0 - Force Feedback command report (REQUIRED by hid-lg driver)
+    // OUTPUT Report - Force Feedback command report (REQUIRED by hid-lg driver)
     0x06, 0x00, 0xFF,  //   Usage Page (Vendor Defined)
     0x09, 0x01,        //   Usage (Vendor Usage 1)
-    0x85, 0x00,        //   Report ID (0)
     0x15, 0x00,        //   Logical Minimum (0)
     0x26, 0xFF, 0x00,  //   Logical Maximum (255)
     0x75, 0x08,        //   Report Size (8)
@@ -199,7 +198,6 @@ bool GamepadDevice::CreateUSBGadget() {
     system("modprobe dummy_hcd 2>/dev/null");
     usleep(100000); // Give modules time to load
     
-    const char* gadget_base = "/sys/kernel/config/usb_gadget/g29wheel";
     const char* hidg_dev = "/dev/hidg0";
     
     // Check if already set up
@@ -264,7 +262,7 @@ bool GamepadDevice::CreateUSBGadget() {
           "echo '000000000001' > strings/0x409/serialnumber && "
           "mkdir -p functions/hid.usb0 && cd functions/hid.usb0 && "
           "echo 1 > protocol && echo 1 > subclass && echo 16 > report_length && "
-          "printf '\\x05\\x01\\x09\\x04\\xa1\\x01\\x09\\x01\\xa1\\x00\\x09\\x30\\x15\\x00\\x27\\xff\\xff\\x00\\x00\\x35\\x00\\x47\\xff\\xff\\x00\\x00\\x75\\x10\\x95\\x01\\x81\\x02\\xc0\\x09\\x01\\xa1\\x00\\x09\\x33\\x09\\x34\\x09\\x35\\x15\\x00\\x27\\xff\\xff\\x00\\x00\\x35\\x00\\x47\\xff\\xff\\x00\\x00\\x75\\x10\\x95\\x03\\x81\\x02\\xc0\\x09\\x39\\x15\\x00\\x25\\x07\\x35\\x00\\x46\\x3b\\x01\\x65\\x14\\x75\\x04\\x95\\x01\\x81\\x42\\x75\\x04\\x95\\x01\\x81\\x03\\x05\\x09\\x19\\x01\\x29\\x19\\x15\\x00\\x25\\x01\\x75\\x01\\x95\\x19\\x81\\x02\\x75\\x07\\x95\\x01\\x81\\x03\\x06\\x00\\xff\\x09\\x01\\x85\\x00\\x15\\x00\\x26\\xff\\x00\\x75\\x08\\x95\\x3f\\x91\\x02\\xc0' > report_desc && "
+          "printf '\\x05\\x01\\x09\\x04\\xa1\\x01\\x09\\x01\\xa1\\x00\\x09\\x30\\x15\\x00\\x27\\xff\\xff\\x00\\x00\\x35\\x00\\x47\\xff\\xff\\x00\\x00\\x75\\x10\\x95\\x01\\x81\\x02\\xc0\\x09\\x01\\xa1\\x00\\x09\\x33\\x09\\x34\\x09\\x35\\x15\\x00\\x27\\xff\\xff\\x00\\x00\\x35\\x00\\x47\\xff\\xff\\x00\\x00\\x75\\x10\\x95\\x03\\x81\\x02\\xc0\\x09\\x39\\x15\\x00\\x25\\x07\\x35\\x00\\x46\\x3b\\x01\\x65\\x14\\x75\\x04\\x95\\x01\\x81\\x42\\x75\\x04\\x95\\x01\\x81\\x03\\x05\\x09\\x19\\x01\\x29\\x19\\x15\\x00\\x25\\x01\\x75\\x01\\x95\\x19\\x81\\x02\\x75\\x07\\x95\\x01\\x81\\x03\\x06\\x00\\xff\\x09\\x01\\x15\\x00\\x26\\xff\\x00\\x75\\x08\\x95\\x3f\\x91\\x02\\xc0' > report_desc && "
           "cd /sys/kernel/config/usb_gadget/g29wheel && "
           "mkdir -p configs/c.1/strings/0x409 && "
           "echo 'G29 Configuration' > configs/c.1/strings/0x409/configuration && "
