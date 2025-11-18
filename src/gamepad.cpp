@@ -960,10 +960,10 @@ void GamepadDevice::FFBUpdateThread() {
             }
             
             // Torque changes velocity (F=ma)
-            velocity += total_torque * 0.0001f;  // Acceleration from torque
+            velocity += total_torque * 0.001f;  // Acceleration from torque
             
             // Damping/friction slows wheel down
-            velocity *= 0.95f;
+            velocity *= 0.92f;
             
             // Velocity changes position
             steering += velocity;
