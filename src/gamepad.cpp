@@ -265,7 +265,16 @@ bool GamepadDevice::CreateUSBGadget() {
           "fi";
     system(cmd.c_str());
     
+    // Build the HID descriptor as a hex string for the shell command
+    std::string descriptor_hex;
+    for (size_t i = 0; i < sizeof(g29_hid_descriptor); i++) {
+        char buf[8];
+        snprintf(buf, sizeof(buf), "\\x%02x", g29_hid_descriptor[i]);
+        descriptor_hex += buf;
+    }
+    
     // Create gadget directory structure
+    // IMPORTANT: Removed "no_out_endpoint" to allow OUTPUT reports (needed for FFB)
     cmd = "cd /sys/kernel/config/usb_gadget && "
           "mkdir g29wheel && cd g29wheel && "
           "echo 0x046d > idVendor && "
@@ -278,8 +287,7 @@ bool GamepadDevice::CreateUSBGadget() {
           "echo '000000000001' > strings/0x409/serialnumber && "
           "mkdir -p functions/hid.usb0 && cd functions/hid.usb0 && "
           "echo 1 > protocol && echo 1 > subclass && echo 16 > report_length && "
-          "echo 1 > no_out_endpoint && "
-          "printf '\\x05\\x01\\x09\\x04\\xa1\\x01\\x09\\x01\\xa1\\x00\\x09\\x30\\x15\\x00\\x27\\xff\\xff\\x00\\x00\\x35\\x00\\x47\\xff\\xff\\x00\\x00\\x75\\x10\\x95\\x01\\x81\\x02\\xc0\\x09\\x01\\xa1\\x00\\x09\\x33\\x09\\x34\\x09\\x35\\x15\\x00\\x27\\xff\\xff\\x00\\x00\\x35\\x00\\x47\\xff\\xff\\x00\\x00\\x75\\x10\\x95\\x03\\x81\\x02\\xc0\\x09\\x39\\x15\\x00\\x25\\x07\\x35\\x00\\x46\\x3b\\x01\\x65\\x14\\x75\\x04\\x95\\x01\\x81\\x42\\x75\\x04\\x95\\x01\\x81\\x03\\x05\\x09\\x19\\x01\\x29\\x19\\x15\\x00\\x25\\x01\\x75\\x01\\x95\\x19\\x81\\x02\\x75\\x07\\x95\\x01\\x81\\x03\\xc0' > report_desc && "
+          "printf '" + descriptor_hex + "' > report_desc && "
           "cd /sys/kernel/config/usb_gadget/g29wheel && "
           "mkdir -p configs/c.1/strings/0x409 && "
           "echo 'G29 Configuration' > configs/c.1/strings/0x409/configuration && "
