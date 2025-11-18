@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <vector>
 
 class Input; // Forward declaration
 
@@ -28,6 +29,7 @@ public:
 
 private:
     int fd;
+    bool use_uhid;
     
     // State
     float steering;
@@ -37,6 +39,13 @@ private:
     int8_t dpad_x;
     int8_t dpad_y;
     
+    // UHID methods
+    bool CreateUHID();
+    bool CreateUInput();
+    void SendUHIDReport();
+    std::vector<uint8_t> BuildHIDReport();
+    
+    // UInput methods (legacy)
     void EmitEvent(uint16_t type, uint16_t code, int32_t value);
     int16_t ClampSteering(int16_t value);
 };

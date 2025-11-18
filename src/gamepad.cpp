@@ -5,21 +5,149 @@
 #include <cstring>
 #include <iostream>
 #include <dirent.h>
+#include <linux/uhid.h>
 #include <linux/uinput.h>
 #include <linux/input-event-codes.h>
 
 GamepadDevice::GamepadDevice() 
-    : fd(-1), steering(0), throttle(0.0f), brake(0.0f), dpad_x(0), dpad_y(0) {
+    : fd(-1), use_uhid(false), steering(0), throttle(0.0f), brake(0.0f), dpad_x(0), dpad_y(0) {
 }
 
 GamepadDevice::~GamepadDevice() {
     if (fd >= 0) {
-        ioctl(fd, UI_DEV_DESTROY);
+        if (use_uhid) {
+            struct uhid_event ev;
+            memset(&ev, 0, sizeof(ev));
+            ev.type = UHID_DESTROY;
+            write(fd, &ev, sizeof(ev));
+        } else {
+            ioctl(fd, UI_DEV_DESTROY);
+        }
         close(fd);
     }
 }
 
+// Logitech G29 HID Report Descriptor
+// This describes the wheel's inputs/outputs to the system
+static const uint8_t g29_hid_descriptor[] = {
+    0x05, 0x01,        // Usage Page (Generic Desktop)
+    0x09, 0x04,        // Usage (Joystick)
+    0xA1, 0x01,        // Collection (Application)
+    
+    // Steering wheel axis
+    0x09, 0x01,        //   Usage (Pointer)
+    0xA1, 0x00,        //   Collection (Physical)
+    0x09, 0x30,        //     Usage (X)
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x27, 0xFF, 0xFF, 0x00, 0x00,  //     Logical Maximum (65535)
+    0x35, 0x00,        //     Physical Minimum (0)
+    0x47, 0xFF, 0xFF, 0x00, 0x00,  //     Physical Maximum (65535)
+    0x75, 0x10,        //     Report Size (16)
+    0x95, 0x01,        //     Report Count (1)
+    0x81, 0x02,        //     Input (Data,Var,Abs)
+    0xC0,              //   End Collection
+    
+    // Pedals (3 axes: throttle, brake, clutch)
+    0x09, 0x01,        //   Usage (Pointer)
+    0xA1, 0x00,        //   Collection (Physical)
+    0x09, 0x33,        //     Usage (Rx) - Throttle
+    0x09, 0x34,        //     Usage (Ry) - Brake  
+    0x09, 0x35,        //     Usage (Rz) - Clutch
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x27, 0xFF, 0xFF, 0x00, 0x00,  //     Logical Maximum (65535)
+    0x35, 0x00,        //     Physical Minimum (0)
+    0x47, 0xFF, 0xFF, 0x00, 0x00,  //     Physical Maximum (65535)
+    0x75, 0x10,        //     Report Size (16)
+    0x95, 0x03,        //     Report Count (3)
+    0x81, 0x02,        //     Input (Data,Var,Abs)
+    0xC0,              //   End Collection
+    
+    // HAT switch (D-Pad)
+    0x09, 0x39,        //   Usage (Hat switch)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x07,        //   Logical Maximum (7)
+    0x35, 0x00,        //   Physical Minimum (0)
+    0x46, 0x3B, 0x01,  //   Physical Maximum (315)
+    0x65, 0x14,        //   Unit (Degrees)
+    0x75, 0x04,        //   Report Size (4)
+    0x95, 0x01,        //   Report Count (1)
+    0x81, 0x42,        //   Input (Data,Var,Abs,Null)
+    
+    // Padding
+    0x75, 0x04,        //   Report Size (4)
+    0x95, 0x01,        //   Report Count (1)
+    0x81, 0x03,        //   Input (Const,Var,Abs)
+    
+    // Buttons (25 buttons)
+    0x05, 0x09,        //   Usage Page (Button)
+    0x19, 0x01,        //   Usage Minimum (Button 1)
+    0x29, 0x19,        //   Usage Maximum (Button 25)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x01,        //   Logical Maximum (1)
+    0x75, 0x01,        //   Report Size (1)
+    0x95, 0x19,        //   Report Count (25)
+    0x81, 0x02,        //   Input (Data,Var,Abs)
+    
+    // Padding to byte boundary (7 bits)
+    0x75, 0x07,        //   Report Size (7)
+    0x95, 0x01,        //   Report Count (1)
+    0x81, 0x03,        //   Input (Const,Var,Abs)
+    
+    0xC0               // End Collection
+};
+
+bool GamepadDevice::CreateUHID() {
+    fd = open("/dev/uhid", O_RDWR);
+    if (fd < 0) {
+        std::cerr << "Failed to open /dev/uhid. Are you running as root?" << std::endl;
+        std::cerr << "Make sure the uhid kernel module is loaded: sudo modprobe uhid" << std::endl;
+        return false;
+    }
+    
+    struct uhid_event ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.type = UHID_CREATE2;
+    
+    strcpy((char*)ev.u.create2.name, "Logitech G29 Driving Force Racing Wheel");
+    ev.u.create2.rd_size = sizeof(g29_hid_descriptor);
+    memcpy(ev.u.create2.rd_data, g29_hid_descriptor, sizeof(g29_hid_descriptor));
+    ev.u.create2.bus = BUS_USB;
+    ev.u.create2.vendor = 0x046d;   // Logitech
+    ev.u.create2.product = 0xc24f;  // G29 Racing Wheel
+    ev.u.create2.version = 0x0111;  // Match real G29 version
+    ev.u.create2.country = 0;
+    
+    if (write(fd, &ev, sizeof(ev)) < 0) {
+        std::cerr << "Failed to create UHID device" << std::endl;
+        close(fd);
+        fd = -1;
+        return false;
+    }
+    
+    // Wait for device to be created
+    usleep(500000); // 500ms
+    
+    std::cout << "Virtual Logitech G29 Racing Wheel created via UHID" << std::endl;
+    std::cout << "This device will appear as a real USB HID device with HIDRAW support" << std::endl;
+    
+    use_uhid = true;
+    return true;
+}
+
 bool GamepadDevice::Create() {
+    // Try UHID first (provides HIDRAW support for better game compatibility)
+    std::cout << "Attempting to create device using UHID (preferred)..." << std::endl;
+    if (CreateUHID()) {
+        return true;
+    }
+    
+    // Fall back to uinput if UHID fails
+    std::cout << "UHID failed, falling back to uinput..." << std::endl;
+    std::cout << "Note: uinput doesn't provide HIDRAW, some games may not detect the wheel" << std::endl;
+    return CreateUInput();
+}
+
+bool GamepadDevice::CreateUInput() {
     fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
     if (fd < 0) {
         std::cerr << "Failed to open /dev/uinput. Are you running as root?" << std::endl;
@@ -29,6 +157,23 @@ bool GamepadDevice::Create() {
     // Enable event types
     ioctl(fd, UI_SET_EVBIT, EV_KEY);
     ioctl(fd, UI_SET_EVBIT, EV_ABS);
+    ioctl(fd, UI_SET_EVBIT, EV_FF);
+    
+    // Enable Force Feedback effects (matching real G29)
+    ioctl(fd, UI_SET_FFBIT, FF_CONSTANT);
+    ioctl(fd, UI_SET_FFBIT, FF_PERIODIC);
+    ioctl(fd, UI_SET_FFBIT, FF_SQUARE);
+    ioctl(fd, UI_SET_FFBIT, FF_TRIANGLE);
+    ioctl(fd, UI_SET_FFBIT, FF_SINE);
+    ioctl(fd, UI_SET_FFBIT, FF_SAW_UP);
+    ioctl(fd, UI_SET_FFBIT, FF_SAW_DOWN);
+    ioctl(fd, UI_SET_FFBIT, FF_RAMP);
+    ioctl(fd, UI_SET_FFBIT, FF_SPRING);
+    ioctl(fd, UI_SET_FFBIT, FF_FRICTION);
+    ioctl(fd, UI_SET_FFBIT, FF_DAMPER);
+    ioctl(fd, UI_SET_FFBIT, FF_INERTIA);
+    ioctl(fd, UI_SET_FFBIT, FF_GAIN);
+    ioctl(fd, UI_SET_FFBIT, FF_AUTOCENTER);
     
     // Enable joystick buttons (matching real G29 wheel - 25 buttons total)
     // First 10 buttons using standard joystick codes
@@ -127,7 +272,8 @@ bool GamepadDevice::Create() {
     setup.id.bustype = BUS_USB;
     setup.id.vendor = 0x046d;   // Logitech
     setup.id.product = 0xc24f;  // G29 Racing Wheel
-    setup.id.version = 1;
+    setup.id.version = 0x0111;  // Match real G29 version (273 decimal)
+    setup.ff_effects_max = 16;  // G29 supports up to 16 simultaneous effects
     strcpy(setup.name, "Logitech G29 Driving Force Racing Wheel");
     
     ioctl(fd, UI_DEV_SETUP, &setup);
@@ -237,6 +383,12 @@ void GamepadDevice::UpdateDPad(const Input& input) {
 void GamepadDevice::SendState() {
     if (fd < 0) return;
     
+    if (use_uhid) {
+        SendUHIDReport();
+        return;
+    }
+    
+    // UInput path (legacy)
     // Send steering wheel position - convert float to int16_t
     EmitEvent(EV_ABS, ABS_X, static_cast<int16_t>(steering));
     
@@ -284,6 +436,99 @@ void GamepadDevice::SendState() {
     
     // Sync
     EmitEvent(EV_SYN, SYN_REPORT, 0);
+}
+
+std::vector<uint8_t> GamepadDevice::BuildHIDReport() {
+    // G29 HID Report structure (16 bytes total):
+    // Byte 0-1: Steering (16-bit, little endian, 0-65535, center=32768)
+    // Byte 2-3: Throttle (16-bit, little endian, inverted: 65535=rest, 0=pressed)
+    // Byte 4-5: Brake (16-bit, little endian, inverted: 65535=rest, 0=pressed)  
+    // Byte 6-7: Clutch (16-bit, little endian, inverted: 65535=rest, 0=pressed)
+    // Byte 8: HAT switch (4 bits) + padding (4 bits)
+    // Byte 9-12: Buttons (25 bits) + padding (7 bits)
+    
+    std::vector<uint8_t> report(16, 0);
+    
+    // Steering: convert from -32768..32767 to 0..65535
+    uint16_t steering_u = static_cast<uint16_t>(static_cast<int16_t>(steering) + 32768);
+    report[0] = steering_u & 0xFF;
+    report[1] = (steering_u >> 8) & 0xFF;
+    
+    // Throttle: inverted, 0-100% -> 65535-0
+    uint16_t throttle_u = 65535 - static_cast<uint16_t>(throttle * 655.35f);
+    report[2] = throttle_u & 0xFF;
+    report[3] = (throttle_u >> 8) & 0xFF;
+    
+    // Brake: inverted, 0-100% -> 65535-0
+    uint16_t brake_u = 65535 - static_cast<uint16_t>(brake * 655.35f);
+    report[4] = brake_u & 0xFF;
+    report[5] = (brake_u >> 8) & 0xFF;
+    
+    // Clutch: always at rest (65535)
+    report[6] = 0xFF;
+    report[7] = 0xFF;
+    
+    // HAT switch (D-Pad): convert from X/Y to 8-direction value
+    uint8_t hat = 0x0F; // Neutral
+    if (dpad_y == -1 && dpad_x == 0) hat = 0; // Up
+    else if (dpad_y == -1 && dpad_x == 1) hat = 1; // Up-Right
+    else if (dpad_y == 0 && dpad_x == 1) hat = 2; // Right
+    else if (dpad_y == 1 && dpad_x == 1) hat = 3; // Down-Right
+    else if (dpad_y == 1 && dpad_x == 0) hat = 4; // Down
+    else if (dpad_y == 1 && dpad_x == -1) hat = 5; // Down-Left
+    else if (dpad_y == 0 && dpad_x == -1) hat = 6; // Left
+    else if (dpad_y == -1 && dpad_x == -1) hat = 7; // Up-Left
+    
+    report[8] = hat & 0x0F;
+    
+    // Buttons: Pack 25 buttons into 4 bytes (32 bits, use 25)
+    uint32_t button_bits = 0;
+    if (buttons["BTN_TRIGGER"]) button_bits |= (1 << 0);
+    if (buttons["BTN_THUMB"]) button_bits |= (1 << 1);
+    if (buttons["BTN_THUMB2"]) button_bits |= (1 << 2);
+    if (buttons["BTN_TOP"]) button_bits |= (1 << 3);
+    if (buttons["BTN_TOP2"]) button_bits |= (1 << 4);
+    if (buttons["BTN_PINKIE"]) button_bits |= (1 << 5);
+    if (buttons["BTN_BASE"]) button_bits |= (1 << 6);
+    if (buttons["BTN_BASE2"]) button_bits |= (1 << 7);
+    if (buttons["BTN_BASE3"]) button_bits |= (1 << 8);
+    if (buttons["BTN_BASE4"]) button_bits |= (1 << 9);
+    if (buttons["BTN_BASE5"]) button_bits |= (1 << 10);
+    if (buttons["BTN_BASE6"]) button_bits |= (1 << 11);
+    if (buttons["BTN_DEAD"]) button_bits |= (1 << 12);
+    if (buttons["BTN_TRIGGER_HAPPY1"]) button_bits |= (1 << 13);
+    if (buttons["BTN_TRIGGER_HAPPY2"]) button_bits |= (1 << 14);
+    if (buttons["BTN_TRIGGER_HAPPY3"]) button_bits |= (1 << 15);
+    if (buttons["BTN_TRIGGER_HAPPY4"]) button_bits |= (1 << 16);
+    if (buttons["BTN_TRIGGER_HAPPY5"]) button_bits |= (1 << 17);
+    if (buttons["BTN_TRIGGER_HAPPY6"]) button_bits |= (1 << 18);
+    if (buttons["BTN_TRIGGER_HAPPY7"]) button_bits |= (1 << 19);
+    if (buttons["BTN_TRIGGER_HAPPY8"]) button_bits |= (1 << 20);
+    if (buttons["BTN_TRIGGER_HAPPY9"]) button_bits |= (1 << 21);
+    if (buttons["BTN_TRIGGER_HAPPY10"]) button_bits |= (1 << 22);
+    if (buttons["BTN_TRIGGER_HAPPY11"]) button_bits |= (1 << 23);
+    if (buttons["BTN_TRIGGER_HAPPY12"]) button_bits |= (1 << 24);
+    
+    report[9] = button_bits & 0xFF;
+    report[10] = (button_bits >> 8) & 0xFF;
+    report[11] = (button_bits >> 16) & 0xFF;
+    report[12] = (button_bits >> 24) & 0xFF;
+    
+    return report;
+}
+
+void GamepadDevice::SendUHIDReport() {
+    std::vector<uint8_t> report_data = BuildHIDReport();
+    
+    struct uhid_event ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.type = UHID_INPUT2;
+    ev.u.input2.size = report_data.size();
+    memcpy(ev.u.input2.data, report_data.data(), report_data.size());
+    
+    if (write(fd, &ev, sizeof(ev)) < 0) {
+        // Silently ignore write errors (device might be disconnected)
+    }
 }
 
 void GamepadDevice::SendNeutral() {
