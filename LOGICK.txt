@@ -1,0 +1,226 @@
+=============================================================================
+WHEEL-EMULATOR ARCHITECTURE
+=============================================================================
+
+PURPOSE: Transform keyboard+mouse into Xbox 360 gamepad for racing games
+DESIGN: Simple C++ using Linux uinput/evdev APIs
+
+=============================================================================
+ARCHITECTURE
+=============================================================================
+
+FILES
+-----
+Makefile          - Build configuration
+src/
+  main.cpp        - Entry point, main loop, signal handling
+  config.h/cpp    - Configuration loading
+  input.h/cpp     - Keyboard/mouse reading, device discovery
+  gamepad.h/cpp   - Virtual gamepad device
+
+COMPONENTS
+----------
+Config:
+  - Loads INI file (~/.config/wheel-emulator.conf or /etc/wheel-emulator.conf)
+  - Stores sensitivity + button mappings
+  - Auto-generates default if missing
+
+Input:
+  - Auto-discovers keyboard/mouse via /dev/input/event*
+  - Reads events into key state map
+  - Detects Ctrl+M toggle
+  - Grabs/ungrabs devices
+
+Gamepad:
+  - Creates virtual Xbox 360 controller via /dev/uinput
+  - Manages state (steering, throttle, brake, buttons)
+  - Sends events to virtual device
+
+=============================================================================
+PROGRAM FLOW
+=============================================================================
+
+Startup:
+  1. Check root privileges
+  2. Load config (find file, parse INI, generate default if needed)
+  3. Create virtual gamepad (/dev/uinput)
+  4. Discover keyboard (search for "keyboard" in device name)
+  5. Discover mouse (search for REL_X capability)
+  6. Grab devices for exclusive access
+
+Main Loop:
+  1. Read keyboard events → update key map
+  2. Read mouse events → accumulate delta_x
+  3. Check for Ctrl+M toggle
+  4. If enabled:
+       - Update steering (accumulative, sensitivity-scaled)
+       - Update throttle/brake (analog ramping)
+       - Update buttons and D-Pad
+       - Send gamepad state
+     Else:
+       - Send neutral state
+  5. Sleep 1ms
+  6. Repeat
+
+Cleanup (Ctrl+C):
+  - Ungrab devices
+  - Close file descriptors (RAII)
+  - Exit
+
+=============================================================================
+IMPLEMENTATION DETAILS
+=============================================================================
+
+CONFIG (config.h/cpp)
+---------------------
+struct Config {
+    int sensitivity = 20;
+    std::map<std::string, int> button_map;
+    
+    bool Load();  // Finds file, parses INI, returns success
+    void SaveDefault(const char* path);
+};
+
+File search priority: ~/.config/wheel-emulator.conf → /etc/wheel-emulator.conf
+INI format: [sensitivity] sensitivity=20, [button_mapping] key=button
+Auto-generates default if neither exists
+Validation: Sensitivity clamped to range [1, 100] during parsing
+
+INPUT (input.h/cpp)
+-------------------
+class Input {
+    int kbd_fd, mouse_fd;
+    bool keys[KEY_MAX] = {false};  // Direct array indexed by KEY_* codes
+    bool prev_toggle = false;
+    
+    bool DiscoverKeyboard();  // Find device with "keyboard" in name
+    bool DiscoverMouse();     // Find device with REL_X capability
+    void Read(int& mouse_dx); // Read events, update keys, accumulate mouse
+    bool CheckToggle();       // Detect Ctrl+M edge, return true if toggled
+    void Grab(bool enable);   // EVIOCGRAB for exclusive access
+    bool IsKeyPressed(int keycode) const;  // Encapsulated key state access
+};
+
+Keyboard discovery: enumerate /dev/input/event*, check name via EVIOCGNAME
+Mouse discovery: enumerate /dev/input/event*, check REL_X via EVIOCGBIT
+Events read non-blocking (O_NONBLOCK), all pending events consumed per cycle
+Keys stored as bool array indexed by event.code (KEY_W, KEY_S, KEY_LEFTCTRL, etc.)
+Key state accessed via IsKeyPressed() for encapsulation
+
+GAMEPAD (gamepad.h/cpp)
+-----------------------
+class GamepadDevice {
+    int fd;
+    
+    // State
+    int16_t steering = 0;       // -32768 to 32767
+    float throttle = 0.0f;      // 0.0 to 100.0
+    float brake = 0.0f;         // 0.0 to 100.0
+    std::map<std::string, bool> buttons;
+    int8_t dpad_x = 0, dpad_y = 0;  // -1, 0, 1
+    
+    bool Create();  // Open /dev/uinput, setup Xbox 360 identity
+    void UpdateSteering(int delta, int sens);  // Accumulative + clamped
+    void UpdateThrottle(bool pressed);         // Ramp ±3.0 per frame
+    void UpdateBrake(bool pressed);
+    void UpdateButtons(const Input& input);
+    void UpdateDPad(const Input& input);
+    void SendState();
+    void SendNeutral();  // All zeros
+};
+
+Virtual device: VID=0x045e, PID=0x028e, name="Xbox 360 Controller"
+Axes: ABS_X (steering), ABS_Z/RZ (triggers 0-255), ABS_HAT0X/Y (dpad)
+Buttons: BTN_A/B/X/Y, BTN_TL/TR (bumpers), BTN_SELECT/START
+
+MAIN LOOP (main.cpp)
+--------------------
+while (true) {
+    mouse_dx = 0;
+    input.Read(mouse_dx);
+    
+    if (input.CheckToggle())
+        input_enabled = !input_enabled;
+    
+    if (input_enabled) {
+        gamepad.UpdateSteering(mouse_dx, config.sensitivity);
+        gamepad.UpdateThrottle(input.IsKeyPressed(KEY_W));
+        gamepad.UpdateBrake(input.IsKeyPressed(KEY_S));
+        gamepad.UpdateButtons(input);
+        gamepad.UpdateDPad(input);
+        gamepad.SendState();
+    } else {
+        gamepad.SendNeutral();
+    }
+    
+    usleep(1000);  // 1ms = 1000 Hz
+}
+
+=============================================================================
+ALGORITHMS
+=============================================================================
+
+Steering (Accumulative):
+  delta_steering = delta_x * (800.0 * sensitivity / 100.0)
+  steering = clamp(steering + delta_steering, -32768, 32767)
+
+Throttle/Brake (Analog Ramping):
+  if pressed: value = min(100.0, value + 3.0)
+  else:       value = max(0.0, value - 3.0)
+  output = uint8_t(value * 2.55)
+
+D-Pad:
+  dpad_x = right - left
+  dpad_y = down - up
+
+Toggle Detection (Edge):
+  both = keys[KEY_LEFTCTRL] && keys[KEY_M]
+  if both && !prev_toggle: toggled = true
+  prev_toggle = both
+
+=============================================================================
+INPUT MAPPINGS
+=============================================================================
+
+Mouse X → ABS_X (steering)
+W → ABS_RZ (right trigger, throttle)
+S → ABS_Z (left trigger, brake)
+Arrow keys → ABS_HAT0X/Y (D-Pad)
+Q/E/F/G/H → BTN_A/B/X/Y/LB (configurable via INI)
+Ctrl+M → Toggle enable/disable
+Ctrl+C → Exit
+
+=============================================================================
+BUILD SYSTEM
+=============================================================================
+
+MAKEFILE
+--------
+CXX = g++
+CXXFLAGS = -std=c++17 -Wall -Wextra -O2
+TARGET = wheel-emulator
+SOURCES = src/main.cpp src/config.cpp src/input.cpp src/gamepad.cpp
+OBJECTS = $(SOURCES:.cpp=.o)
+
+all: $(TARGET)
+
+$(TARGET): $(OBJECTS)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+clean:
+	rm -f $(OBJECTS) $(TARGET)
+
+install: $(TARGET)
+	install -m 755 $(TARGET) /usr/local/bin/
+
+.PHONY: all clean install
+
+Usage:
+  make          - Build the executable
+  make clean    - Remove build artifacts
+  make install  - Install to /usr/local/bin (requires root)
+
+=============================================================================
