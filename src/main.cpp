@@ -308,6 +308,9 @@ int main(int argc, char* argv[]) {
             gamepad.SendNeutral();
         }
         
+        // Process UHID events (for FFB and kernel requests)
+        gamepad.ProcessUHIDEvents();
+        
         // Sleep for 8ms (125 Hz update rate, matching real racing wheels)
         usleep(8000);
     }

@@ -124,8 +124,32 @@ bool GamepadDevice::CreateUHID() {
         return false;
     }
     
-    // Wait for device to be created
-    usleep(500000); // 500ms
+    // Set file descriptor to non-blocking for event reading
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    
+    // Wait for UHID_START event to confirm device creation
+    bool device_started = false;
+    for (int i = 0; i < 10; i++) {  // Try for 1 second (10 * 100ms)
+        struct uhid_event response;
+        ssize_t ret = read(fd, &response, sizeof(response));
+        if (ret > 0) {
+            if (response.type == UHID_START) {
+                device_started = true;
+                break;
+            } else if (response.type == UHID_OPEN) {
+                // Device opened by kernel, this is good
+                device_started = true;
+                break;
+            }
+        }
+        usleep(100000); // 100ms
+    }
+    
+    if (!device_started) {
+        std::cerr << "Warning: UHID device created but UHID_START event not received" << std::endl;
+        std::cerr << "Device may not be fully initialized" << std::endl;
+    }
     
     std::cout << "Virtual Logitech G29 Racing Wheel created via UHID" << std::endl;
     std::cout << "This device will appear as a real USB HID device with HIDRAW support" << std::endl;
@@ -593,4 +617,73 @@ void GamepadDevice::EmitEvent(uint16_t type, uint16_t code, int32_t value) {
 int16_t GamepadDevice::ClampSteering(int16_t value) {
     // int16_t is already in range [-32768, 32767], no clamping needed
     return value;
+}
+
+void GamepadDevice::ProcessUHIDEvents() {
+    if (!use_uhid || fd < 0) return;
+    
+    struct uhid_event ev;
+    ssize_t ret;
+    
+    // Process all pending UHID events (non-blocking)
+    while ((ret = read(fd, &ev, sizeof(ev))) > 0) {
+        switch (ev.type) {
+            case UHID_START:
+                // Device started, ready to receive input
+                break;
+                
+            case UHID_STOP:
+                // Device stopped
+                break;
+                
+            case UHID_OPEN:
+                // Application opened the device
+                break;
+                
+            case UHID_CLOSE:
+                // Application closed the device
+                break;
+                
+            case UHID_OUTPUT:
+                // Force Feedback output from game
+                // ev.u.output contains FFB data
+                // For now, we just acknowledge it
+                break;
+                
+            case UHID_GET_REPORT:
+                // Game requests current state
+                // Send back current HID report
+                {
+                    struct uhid_event reply;
+                    memset(&reply, 0, sizeof(reply));
+                    reply.type = UHID_GET_REPORT_REPLY;
+                    reply.u.get_report_reply.id = ev.u.get_report.id;
+                    reply.u.get_report_reply.err = 0;
+                    
+                    std::vector<uint8_t> report = BuildHIDReport();
+                    reply.u.get_report_reply.size = report.size();
+                    memcpy(reply.u.get_report_reply.data, report.data(), report.size());
+                    
+                    write(fd, &reply, sizeof(reply));
+                }
+                break;
+                
+            case UHID_SET_REPORT:
+                // Game sets report (e.g., FFB commands)
+                // Send acknowledgment
+                {
+                    struct uhid_event reply;
+                    memset(&reply, 0, sizeof(reply));
+                    reply.type = UHID_SET_REPORT_REPLY;
+                    reply.u.set_report_reply.id = ev.u.set_report.id;
+                    reply.u.set_report_reply.err = 0;
+                    write(fd, &reply, sizeof(reply));
+                }
+                break;
+                
+            default:
+                // Unknown event type
+                break;
+        }
+    }
 }

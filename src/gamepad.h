@@ -26,6 +26,9 @@ public:
     // Send state to virtual device
     void SendState();
     void SendNeutral();
+    
+    // Process UHID events (must be called regularly when using UHID)
+    void ProcessUHIDEvents();
 
 private:
     int fd;
