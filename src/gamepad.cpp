@@ -484,9 +484,14 @@ bool GamepadDevice::CreateUInput() {
 void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
     std::lock_guard<std::mutex> lock(state_mutex);
     
-    // Mouse input directly sets user torque (not accumulated)
-    // Each mouse movement is immediate force, doesn't build up
-    user_torque = delta * static_cast<float>(sensitivity) * 200.0f;
+    // Apply small deadzone to filter out mouse jitter
+    if (delta > -2 && delta < 2) {
+        delta = 0;
+    }
+    
+    // Mouse input sets user torque - scaled to match FFB force range
+    // Reduced from 200x to 20x so mouse doesn't overpower FFB
+    user_torque = delta * static_cast<float>(sensitivity) * 20.0f;
 }
 
 void GamepadDevice::UpdateThrottle(bool pressed) {
@@ -962,8 +967,8 @@ void GamepadDevice::FFBUpdateThread() {
             // Torque changes velocity (F=ma)
             velocity += total_torque * 0.001f;  // Acceleration from torque
             
-            // Damping/friction slows wheel down
-            velocity *= 0.92f;
+            // Damping/friction slows wheel down - reduced from 0.92 to 0.98 for smoother feel
+            velocity *= 0.98f;
             
             // Velocity changes position
             steering += velocity;
@@ -979,8 +984,8 @@ void GamepadDevice::FFBUpdateThread() {
             }
         }
         
-        // Update at ~100Hz (10ms per frame)
-        usleep(10000);
+        // Update at 125Hz to match main loop (8ms per frame)
+        usleep(8000);
     }
     
     std::cout << "FFB update thread stopped" << std::endl;
