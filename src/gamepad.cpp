@@ -42,7 +42,7 @@ bool GamepadDevice::Create() {
     // Setup axes
     struct uinput_abs_setup abs_setup;
     
-    // Steering (left stick X)
+    // Left Stick X (steering)
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_X;
     abs_setup.absinfo.minimum = -32768;
@@ -50,7 +50,15 @@ bool GamepadDevice::Create() {
     abs_setup.absinfo.value = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
     
-    // Brake (left trigger)
+    // Left Stick Y (unused, but required for Xbox 360)
+    memset(&abs_setup, 0, sizeof(abs_setup));
+    abs_setup.code = ABS_Y;
+    abs_setup.absinfo.minimum = -32768;
+    abs_setup.absinfo.maximum = 32767;
+    abs_setup.absinfo.value = 0;
+    ioctl(fd, UI_ABS_SETUP, &abs_setup);
+    
+    // Left Trigger (brake) - for web gamepad API
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_Z;
     abs_setup.absinfo.minimum = 0;
@@ -58,9 +66,41 @@ bool GamepadDevice::Create() {
     abs_setup.absinfo.value = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
     
-    // Throttle (right trigger)
+    // Right Stick X (unused, but required for Xbox 360)
+    memset(&abs_setup, 0, sizeof(abs_setup));
+    abs_setup.code = ABS_RX;
+    abs_setup.absinfo.minimum = -32768;
+    abs_setup.absinfo.maximum = 32767;
+    abs_setup.absinfo.value = 0;
+    ioctl(fd, UI_ABS_SETUP, &abs_setup);
+    
+    // Right Stick Y (unused, but required for Xbox 360)
+    memset(&abs_setup, 0, sizeof(abs_setup));
+    abs_setup.code = ABS_RY;
+    abs_setup.absinfo.minimum = -32768;
+    abs_setup.absinfo.maximum = 32767;
+    abs_setup.absinfo.value = 0;
+    ioctl(fd, UI_ABS_SETUP, &abs_setup);
+    
+    // Right Trigger (throttle) - for web gamepad API
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_RZ;
+    abs_setup.absinfo.minimum = 0;
+    abs_setup.absinfo.maximum = 255;
+    abs_setup.absinfo.value = 0;
+    ioctl(fd, UI_ABS_SETUP, &abs_setup);
+    
+    // Gas pedal (throttle) - for Steam and racing games
+    memset(&abs_setup, 0, sizeof(abs_setup));
+    abs_setup.code = ABS_GAS;
+    abs_setup.absinfo.minimum = 0;
+    abs_setup.absinfo.maximum = 255;
+    abs_setup.absinfo.value = 0;
+    ioctl(fd, UI_ABS_SETUP, &abs_setup);
+    
+    // Brake pedal (brake) - for Steam and racing games
+    memset(&abs_setup, 0, sizeof(abs_setup));
+    abs_setup.code = ABS_BRAKE;
     abs_setup.absinfo.minimum = 0;
     abs_setup.absinfo.maximum = 255;
     abs_setup.absinfo.value = 0;
@@ -147,16 +187,27 @@ void GamepadDevice::UpdateDPad(const Input& input) {
 void GamepadDevice::SendState() {
     if (fd < 0) return;
     
-    // Send steering
+    // Send steering (left stick X)
     EmitEvent(EV_ABS, ABS_X, steering);
     
-    // Send throttle (right trigger)
-    uint8_t throttle_val = static_cast<uint8_t>(throttle * 2.55f);
-    EmitEvent(EV_ABS, ABS_RZ, throttle_val);
+    // Send left stick Y (unused, always 0)
+    EmitEvent(EV_ABS, ABS_Y, 0);
     
-    // Send brake (left trigger)
+    // Send right stick (unused, always 0)
+    EmitEvent(EV_ABS, ABS_RX, 0);
+    EmitEvent(EV_ABS, ABS_RY, 0);
+    
+    // Send throttle and brake values
+    uint8_t throttle_val = static_cast<uint8_t>(throttle * 2.55f);
     uint8_t brake_val = static_cast<uint8_t>(brake * 2.55f);
+    
+    // Send as triggers (for web gamepad API)
+    EmitEvent(EV_ABS, ABS_RZ, throttle_val);
     EmitEvent(EV_ABS, ABS_Z, brake_val);
+    
+    // Send as pedals (for Steam and racing games)
+    EmitEvent(EV_ABS, ABS_GAS, throttle_val);
+    EmitEvent(EV_ABS, ABS_BRAKE, brake_val);
     
     // Send buttons
     EmitEvent(EV_KEY, BTN_A, buttons["BTN_A"] ? 1 : 0);
@@ -176,9 +227,17 @@ void GamepadDevice::SendState() {
 void GamepadDevice::SendNeutral() {
     if (fd < 0) return;
     
+    // Zero all stick axes
     EmitEvent(EV_ABS, ABS_X, 0);
-    EmitEvent(EV_ABS, ABS_RZ, 0);
+    EmitEvent(EV_ABS, ABS_Y, 0);
+    EmitEvent(EV_ABS, ABS_RX, 0);
+    EmitEvent(EV_ABS, ABS_RY, 0);
+    
+    // Zero triggers and pedals
     EmitEvent(EV_ABS, ABS_Z, 0);
+    EmitEvent(EV_ABS, ABS_RZ, 0);
+    EmitEvent(EV_ABS, ABS_GAS, 0);
+    EmitEvent(EV_ABS, ABS_BRAKE, 0);
     EmitEvent(EV_KEY, BTN_A, 0);
     EmitEvent(EV_KEY, BTN_B, 0);
     EmitEvent(EV_KEY, BTN_X, 0);
