@@ -33,6 +33,7 @@ public:
 private:
     int fd;
     bool use_uhid;
+    bool use_gadget;  // USB Gadget mode (proper USB device)
     
     // State
     float steering;
@@ -44,6 +45,7 @@ private:
     
     // UHID methods
     bool CreateUHID();
+    bool CreateUSBGadget();
     bool CreateUInput();
     void SendUHIDReport();
     std::vector<uint8_t> BuildHIDReport();

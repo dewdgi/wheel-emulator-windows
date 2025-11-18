@@ -5,12 +5,13 @@
 #include <cstring>
 #include <iostream>
 #include <dirent.h>
+#include <cstdlib>
 #include <linux/uhid.h>
 #include <linux/uinput.h>
 #include <linux/input-event-codes.h>
 
 GamepadDevice::GamepadDevice() 
-    : fd(-1), use_uhid(false), steering(0), throttle(0.0f), brake(0.0f), dpad_x(0), dpad_y(0) {
+    : fd(-1), use_uhid(false), use_gadget(false), steering(0), throttle(0.0f), brake(0.0f), dpad_x(0), dpad_y(0) {
 }
 
 GamepadDevice::~GamepadDevice() {
@@ -114,7 +115,7 @@ bool GamepadDevice::CreateUHID() {
     ev.u.create2.bus = BUS_USB;
     ev.u.create2.vendor = 0x046d;   // Logitech
     ev.u.create2.product = 0xc24f;  // G29 Racing Wheel
-    ev.u.create2.version = 0x0111;  // Match real G29 version
+    ev.u.create2.version = 0x0111;
     ev.u.create2.country = 0;
     
     if (write(fd, &ev, sizeof(ev)) < 0) {
@@ -152,23 +153,111 @@ bool GamepadDevice::CreateUHID() {
     }
     
     std::cout << "Virtual Logitech G29 Racing Wheel created via UHID" << std::endl;
-    std::cout << "This device will appear as a real USB HID device with HIDRAW support" << std::endl;
+    std::cout << "VID:046d PID:c24f Version:0x0111" << std::endl;
+    std::cout << "Device provides HIDRAW support for Proton/Wine compatibility" << std::endl;
     
     use_uhid = true;
     return true;
 }
 
 bool GamepadDevice::Create() {
-    // Try UHID first (provides HIDRAW support for better game compatibility)
-    std::cout << "Attempting to create device using UHID (preferred)..." << std::endl;
+    // Try USB Gadget first (proper USB device with full driver support)
+    std::cout << "Attempting to create device using USB Gadget (real USB device)..." << std::endl;
+    if (CreateUSBGadget()) {
+        return true;
+    }
+    
+    // Try UHID second (provides HIDRAW support)
+    std::cout << "USB Gadget not available, trying UHID..." << std::endl;
     if (CreateUHID()) {
         return true;
     }
     
-    // Fall back to uinput if UHID fails
+    // Fall back to uinput if both fail
     std::cout << "UHID failed, falling back to uinput..." << std::endl;
     std::cout << "Note: uinput doesn't provide HIDRAW, some games may not detect the wheel" << std::endl;
     return CreateUInput();
+}
+
+bool GamepadDevice::CreateUSBGadget() {
+    // USB Gadget HID creates a REAL USB device that the Logitech driver can bind to
+    // Setup USB Gadget ConfigFS if not already configured
+    
+    const char* gadget_base = "/sys/kernel/config/usb_gadget/g29wheel";
+    const char* hidg_dev = "/dev/hidg0";
+    
+    // Check if already set up
+    if (access(hidg_dev, F_OK) == 0) {
+        fd = open(hidg_dev, O_RDWR | O_NONBLOCK);
+        if (fd >= 0) {
+            std::cout << "USB Gadget device already configured and opened" << std::endl;
+            std::cout << "Real USB Logitech G29 device (VID:046d PID:c24f)" << std::endl;
+            use_gadget = true;
+            use_uhid = true;
+            return true;
+        }
+    }
+    
+    // Try to set up USB Gadget ConfigFS
+    std::string cmd;
+    
+    // Remove existing gadget if present
+    cmd = "test -d " + std::string(gadget_base) + " && (echo '' > " + std::string(gadget_base) + "/UDC 2>/dev/null || true; "
+          "rm -f " + std::string(gadget_base) + "/configs/c.1/hid.usb0 2>/dev/null || true; "
+          "rmdir " + std::string(gadget_base) + "/configs/c.1/strings/0x409 2>/dev/null || true; "
+          "rmdir " + std::string(gadget_base) + "/configs/c.1 2>/dev/null || true; "
+          "rmdir " + std::string(gadget_base) + "/functions/hid.usb0 2>/dev/null || true; "
+          "rmdir " + std::string(gadget_base) + "/strings/0x409 2>/dev/null || true; "
+          "rmdir " + std::string(gadget_base) + " 2>/dev/null || true) 2>/dev/null";
+    system(cmd.c_str());
+    
+    // Create gadget directory structure
+    cmd = "mkdir -p " + std::string(gadget_base) + " && cd " + std::string(gadget_base) + " && "
+          "echo 0x046d > idVendor && "
+          "echo 0xc24f > idProduct && "
+          "echo 0x0111 > bcdDevice && "
+          "echo 0x0200 > bcdUSB && "
+          "mkdir -p strings/0x409 && "
+          "echo 'Logitech' > strings/0x409/manufacturer && "
+          "echo 'G29 Driving Force Racing Wheel' > strings/0x409/product && "
+          "echo '000000000001' > strings/0x409/serialnumber && "
+          "mkdir -p functions/hid.usb0 && cd functions/hid.usb0 && "
+          "echo 1 > protocol && echo 1 > subclass && echo 16 > report_length && "
+          "printf '\\x05\\x01\\x09\\x04\\xa1\\x01\\x09\\x01\\xa1\\x00\\x09\\x30\\x15\\x00\\x27\\xff\\xff\\x00\\x00\\x35\\x00\\x47\\xff\\xff\\x00\\x00\\x75\\x10\\x95\\x01\\x81\\x02\\xc0\\x09\\x01\\xa1\\x00\\x09\\x33\\x09\\x34\\x09\\x35\\x15\\x00\\x27\\xff\\xff\\x00\\x00\\x35\\x00\\x47\\xff\\xff\\x00\\x00\\x75\\x10\\x95\\x03\\x81\\x02\\xc0\\x09\\x39\\x15\\x00\\x25\\x07\\x35\\x00\\x46\\x3b\\x01\\x65\\x14\\x75\\x04\\x95\\x01\\x81\\x42\\x75\\x04\\x95\\x01\\x81\\x03\\x05\\x09\\x19\\x01\\x29\\x19\\x15\\x00\\x25\\x01\\x75\\x01\\x95\\x19\\x81\\x02\\x75\\x07\\x95\\x01\\x81\\x03\\xc0' > report_desc && "
+          "cd " + std::string(gadget_base) + " && "
+          "mkdir -p configs/c.1/strings/0x409 && "
+          "echo 'G29 Configuration' > configs/c.1/strings/0x409/configuration && "
+          "echo 500 > configs/c.1/MaxPower && "
+          "ln -s functions/hid.usb0 configs/c.1/ && "
+          "UDC=$(ls /sys/class/udc 2>/dev/null | head -n1) && "
+          "if [ -n \"$UDC\" ]; then echo $UDC > UDC; fi";
+    
+    int ret = system(cmd.c_str());
+    if (ret != 0) {
+        std::cerr << "Failed to setup USB Gadget ConfigFS" << std::endl;
+        std::cerr << "Requirements:" << std::endl;
+        std::cerr << "  1. Kernel with CONFIG_USB_CONFIGFS=y" << std::endl;
+        std::cerr << "  2. USB Device Controller (UDC) hardware OR dummy_hcd module" << std::endl;
+        std::cerr << "  3. ConfigFS mounted at /sys/kernel/config" << std::endl;
+        std::cerr << "Try: sudo modprobe dummy_hcd" << std::endl;
+        return false;
+    }
+    
+    usleep(500000); // Wait for device creation
+    
+    fd = open(hidg_dev, O_RDWR | O_NONBLOCK);
+    if (fd < 0) {
+        std::cerr << "USB Gadget configured but failed to open " << hidg_dev << std::endl;
+        return false;
+    }
+    
+    std::cout << "USB Gadget device created successfully!" << std::endl;
+    std::cout << "Real USB Logitech G29 device (VID:046d PID:c24f)" << std::endl;
+    std::cout << "Device will bind to kernel's hid-lg driver with proper USB interface 0" << std::endl;
+    
+    use_gadget = true;
+    use_uhid = true;
+    return true;
 }
 
 bool GamepadDevice::CreateUInput() {
@@ -544,14 +633,22 @@ std::vector<uint8_t> GamepadDevice::BuildHIDReport() {
 void GamepadDevice::SendUHIDReport() {
     std::vector<uint8_t> report_data = BuildHIDReport();
     
-    struct uhid_event ev;
-    memset(&ev, 0, sizeof(ev));
-    ev.type = UHID_INPUT2;
-    ev.u.input2.size = report_data.size();
-    memcpy(ev.u.input2.data, report_data.data(), report_data.size());
-    
-    if (write(fd, &ev, sizeof(ev)) < 0) {
-        // Silently ignore write errors (device might be disconnected)
+    if (use_gadget) {
+        // USB Gadget: Write raw HID report directly
+        if (write(fd, report_data.data(), report_data.size()) < 0) {
+            // Silently ignore write errors
+        }
+    } else {
+        // UHID: Wrap in uhid_event structure
+        struct uhid_event ev;
+        memset(&ev, 0, sizeof(ev));
+        ev.type = UHID_INPUT2;
+        ev.u.input2.size = report_data.size();
+        memcpy(ev.u.input2.data, report_data.data(), report_data.size());
+        
+        if (write(fd, &ev, sizeof(ev)) < 0) {
+            // Silently ignore write errors (device might be disconnected)
+        }
     }
 }
 
@@ -620,6 +717,11 @@ int16_t GamepadDevice::ClampSteering(int16_t value) {
 }
 
 void GamepadDevice::ProcessUHIDEvents() {
+    if (use_gadget) {
+        // USB Gadget doesn't need event processing
+        return;
+    }
+    
     if (!use_uhid || fd < 0) return;
     
     struct uhid_event ev;
