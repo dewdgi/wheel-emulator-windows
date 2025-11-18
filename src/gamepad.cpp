@@ -58,7 +58,7 @@ bool GamepadDevice::Create() {
     abs_setup.absinfo.value = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
     
-    // Left Trigger (brake) - for web gamepad API
+    // Left Trigger (brake)
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_Z;
     abs_setup.absinfo.minimum = 0;
@@ -82,25 +82,9 @@ bool GamepadDevice::Create() {
     abs_setup.absinfo.value = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
     
-    // Right Trigger (throttle) - for web gamepad API
+    // Right Trigger (throttle)
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_RZ;
-    abs_setup.absinfo.minimum = 0;
-    abs_setup.absinfo.maximum = 255;
-    abs_setup.absinfo.value = 0;
-    ioctl(fd, UI_ABS_SETUP, &abs_setup);
-    
-    // Gas pedal (throttle) - for Steam and racing games
-    memset(&abs_setup, 0, sizeof(abs_setup));
-    abs_setup.code = ABS_GAS;
-    abs_setup.absinfo.minimum = 0;
-    abs_setup.absinfo.maximum = 255;
-    abs_setup.absinfo.value = 0;
-    ioctl(fd, UI_ABS_SETUP, &abs_setup);
-    
-    // Brake pedal (brake) - for Steam and racing games
-    memset(&abs_setup, 0, sizeof(abs_setup));
-    abs_setup.code = ABS_BRAKE;
     abs_setup.absinfo.minimum = 0;
     abs_setup.absinfo.maximum = 255;
     abs_setup.absinfo.value = 0;
@@ -197,17 +181,12 @@ void GamepadDevice::SendState() {
     EmitEvent(EV_ABS, ABS_RX, 0);
     EmitEvent(EV_ABS, ABS_RY, 0);
     
-    // Send throttle and brake values
+    // Send throttle and brake as triggers (Xbox 360 standard)
     uint8_t throttle_val = static_cast<uint8_t>(throttle * 2.55f);
     uint8_t brake_val = static_cast<uint8_t>(brake * 2.55f);
     
-    // Send as triggers (for web gamepad API)
-    EmitEvent(EV_ABS, ABS_RZ, throttle_val);
-    EmitEvent(EV_ABS, ABS_Z, brake_val);
-    
-    // Send as pedals (for Steam and racing games)
-    EmitEvent(EV_ABS, ABS_GAS, throttle_val);
-    EmitEvent(EV_ABS, ABS_BRAKE, brake_val);
+    EmitEvent(EV_ABS, ABS_Z, brake_val);    // Left trigger
+    EmitEvent(EV_ABS, ABS_RZ, throttle_val); // Right trigger
     
     // Send buttons
     EmitEvent(EV_KEY, BTN_A, buttons["BTN_A"] ? 1 : 0);
@@ -233,11 +212,9 @@ void GamepadDevice::SendNeutral() {
     EmitEvent(EV_ABS, ABS_RX, 0);
     EmitEvent(EV_ABS, ABS_RY, 0);
     
-    // Zero triggers and pedals
+    // Zero triggers
     EmitEvent(EV_ABS, ABS_Z, 0);
     EmitEvent(EV_ABS, ABS_RZ, 0);
-    EmitEvent(EV_ABS, ABS_GAS, 0);
-    EmitEvent(EV_ABS, ABS_BRAKE, 0);
     EmitEvent(EV_KEY, BTN_A, 0);
     EmitEvent(EV_KEY, BTN_B, 0);
     EmitEvent(EV_KEY, BTN_X, 0);

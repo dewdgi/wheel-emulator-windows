@@ -35,11 +35,12 @@ Gamepad:
   - Creates virtual Xbox 360 controller via /dev/uinput
   - Manages state (steering, throttle, brake, buttons)
   - Sends events to virtual device
-  - Complete axis mapping for compatibility:
+  - Standard Xbox 360 axis mapping:
     * ABS_X/Y:   Left stick (X = steering, Y = unused/0)
     * ABS_RX/RY: Right stick (unused, both 0)
-    * ABS_Z/RZ:  Triggers (Z = brake, RZ = throttle) - for web API
-    * ABS_BRAKE/GAS: Pedals (same values) - for Steam/racing games
+    * ABS_Z:     Left trigger (brake, 0-255)
+    * ABS_RZ:    Right trigger (throttle, 0-255)
+    * ABS_HAT0X/Y: D-Pad
 
 =============================================================================
 PROGRAM FLOW
@@ -151,19 +152,15 @@ class GamepadDevice {
 };
 
 Virtual device: VID=0x045e, PID=0x028e, name="Xbox 360 Controller"
-Axes (all configured for full compatibility):
+Axes (matching real Xbox 360 controller):
   - ABS_X:     Left stick X (steering, -32768 to 32767)
   - ABS_Y:     Left stick Y (unused, always 0)
   - ABS_RX:    Right stick X (unused, always 0)
   - ABS_RY:    Right stick Y (unused, always 0)
-  - ABS_Z:     Left trigger (brake, 0-255) - web gamepad API
-  - ABS_RZ:    Right trigger (throttle, 0-255) - web gamepad API
-  - ABS_BRAKE: Brake pedal (0-255) - Steam/racing games
-  - ABS_GAS:   Gas pedal (0-255) - Steam/racing games
+  - ABS_Z:     Left trigger (brake, 0-255)
+  - ABS_RZ:    Right trigger (throttle, 0-255)
   - ABS_HAT0X/Y: D-Pad (-1, 0, 1)
 Buttons: BTN_A/B/X/Y, BTN_TL/TR (bumpers), BTN_SELECT/START
-
-Note: Throttle/brake sent to both trigger AND pedal axes for maximum compatibility
 
 MAIN LOOP (main.cpp)
 --------------------
