@@ -11,10 +11,18 @@
 #include <linux/input-event-codes.h>
 
 GamepadDevice::GamepadDevice() 
-    : fd(-1), use_uhid(false), use_gadget(false), steering(0), throttle(0.0f), brake(0.0f), dpad_x(0), dpad_y(0) {
+    : fd(-1), use_uhid(false), use_gadget(false), gadget_running(false), steering(0), throttle(0.0f), brake(0.0f), dpad_x(0), dpad_y(0) {
 }
 
 GamepadDevice::~GamepadDevice() {
+    // Stop USB Gadget polling thread if running
+    if (gadget_running) {
+        gadget_running = false;
+        if (gadget_thread.joinable()) {
+            gadget_thread.join();
+        }
+    }
+    
     if (fd >= 0) {
         if (use_uhid) {
             struct uhid_event ev;
@@ -262,7 +270,8 @@ bool GamepadDevice::CreateUSBGadget() {
           "echo '000000000001' > strings/0x409/serialnumber && "
           "mkdir -p functions/hid.usb0 && cd functions/hid.usb0 && "
           "echo 1 > protocol && echo 1 > subclass && echo 16 > report_length && "
-          "printf '\\x05\\x01\\x09\\x04\\xa1\\x01\\x09\\x01\\xa1\\x00\\x09\\x30\\x15\\x00\\x27\\xff\\xff\\x00\\x00\\x35\\x00\\x47\\xff\\xff\\x00\\x00\\x75\\x10\\x95\\x01\\x81\\x02\\xc0\\x09\\x01\\xa1\\x00\\x09\\x33\\x09\\x34\\x09\\x35\\x15\\x00\\x27\\xff\\xff\\x00\\x00\\x35\\x00\\x47\\xff\\xff\\x00\\x00\\x75\\x10\\x95\\x03\\x81\\x02\\xc0\\x09\\x39\\x15\\x00\\x25\\x07\\x35\\x00\\x46\\x3b\\x01\\x65\\x14\\x75\\x04\\x95\\x01\\x81\\x42\\x75\\x04\\x95\\x01\\x81\\x03\\x05\\x09\\x19\\x01\\x29\\x19\\x15\\x00\\x25\\x01\\x75\\x01\\x95\\x19\\x81\\x02\\x75\\x07\\x95\\x01\\x81\\x03\\x06\\x00\\xff\\x09\\x01\\x15\\x00\\x26\\xff\\x00\\x75\\x08\\x95\\x3f\\x91\\x02\\xc0' > report_desc && "
+          "echo 1 > no_out_endpoint && "
+          "printf '\\x05\\x01\\x09\\x04\\xa1\\x01\\x09\\x01\\xa1\\x00\\x09\\x30\\x15\\x00\\x27\\xff\\xff\\x00\\x00\\x35\\x00\\x47\\xff\\xff\\x00\\x00\\x75\\x10\\x95\\x01\\x81\\x02\\xc0\\x09\\x01\\xa1\\x00\\x09\\x33\\x09\\x34\\x09\\x35\\x15\\x00\\x27\\xff\\xff\\x00\\x00\\x35\\x00\\x47\\xff\\xff\\x00\\x00\\x75\\x10\\x95\\x03\\x81\\x02\\xc0\\x09\\x39\\x15\\x00\\x25\\x07\\x35\\x00\\x46\\x3b\\x01\\x65\\x14\\x75\\x04\\x95\\x01\\x81\\x42\\x75\\x04\\x95\\x01\\x81\\x03\\x05\\x09\\x19\\x01\\x29\\x19\\x15\\x00\\x25\\x01\\x75\\x01\\x95\\x19\\x81\\x02\\x75\\x07\\x95\\x01\\x81\\x03\\xc0' > report_desc && "
           "cd /sys/kernel/config/usb_gadget/g29wheel && "
           "mkdir -p configs/c.1/strings/0x409 && "
           "echo 'G29 Configuration' > configs/c.1/strings/0x409/configuration && "
@@ -291,6 +300,11 @@ bool GamepadDevice::CreateUSBGadget() {
     
     use_gadget = true;
     use_uhid = true;
+    
+    // Start polling thread to respond to host requests (like real USB HID device)
+    gadget_running = true;
+    gadget_thread = std::thread(&GamepadDevice::USBGadgetPollingThread, this);
+    
     return true;
 }
 
@@ -458,6 +472,8 @@ bool GamepadDevice::CreateUInput() {
 }
 
 void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    
     // Pure linear steering: each pixel of mouse movement adds to steering
     // Using sensitivity/5 for better feel (e.g., sensitivity=20 -> 4 units per pixel)
     // At sensitivity=20: 4 units per pixel, full lock at 32768/4 = 8192 pixels (~8cm at 1000 DPI)
@@ -470,6 +486,8 @@ void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
 }
 
 void GamepadDevice::UpdateThrottle(bool pressed) {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    
     if (pressed) {
         throttle = (throttle + 3.0f > 100.0f) ? 100.0f : throttle + 3.0f;
     } else {
@@ -478,6 +496,8 @@ void GamepadDevice::UpdateThrottle(bool pressed) {
 }
 
 void GamepadDevice::UpdateBrake(bool pressed) {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    
     if (pressed) {
         brake = (brake + 3.0f > 100.0f) ? 100.0f : brake + 3.0f;
     } else {
@@ -486,6 +506,8 @@ void GamepadDevice::UpdateBrake(bool pressed) {
 }
 
 void GamepadDevice::UpdateButtons(const Input& input) {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    
     // Map keyboard keys to wheel buttons (all 25 buttons for G29)
     // Primary buttons (1-12)
     buttons["BTN_TRIGGER"] = input.IsKeyPressed(KEY_Q);
@@ -518,6 +540,8 @@ void GamepadDevice::UpdateButtons(const Input& input) {
 }
 
 void GamepadDevice::UpdateDPad(const Input& input) {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    
     int right = input.IsKeyPressed(KEY_RIGHT) ? 1 : 0;
     int left = input.IsKeyPressed(KEY_LEFT) ? 1 : 0;
     int down = input.IsKeyPressed(KEY_DOWN) ? 1 : 0;
@@ -822,4 +846,52 @@ void GamepadDevice::ProcessUHIDEvents() {
                 break;
         }
     }
+}
+
+void GamepadDevice::USBGadgetPollingThread() {
+    // This thread mimics real USB HID device behavior:
+    // - Host polls the interrupt IN endpoint at regular intervals (1-8ms typical)
+    // - Device responds immediately with current HID report
+    // - This is request-response, not push-based
+    
+    std::cout << "USB Gadget polling thread started (mimicking real USB HID behavior)" << std::endl;
+    
+    // Set to blocking mode for proper poll-response behavior
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+    
+    while (gadget_running) {
+        // Build current HID report with thread-safe state access
+        std::vector<uint8_t> report;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex);
+            report = BuildHIDReport();
+        }
+        
+        // Write report - this blocks until host polls (like real USB HID)
+        // The kernel USB gadget driver handles the actual USB protocol
+        ssize_t ret = write(fd, report.data(), report.size());
+        
+        if (ret < 0) {
+            if (errno == EAGAIN || errno == EINTR) {
+                // Temporary error, retry
+                usleep(1000);
+                continue;
+            } else if (errno == ESHUTDOWN || errno == ECONNRESET) {
+                // Device disconnected gracefully
+                std::cout << "USB Gadget device disconnected" << std::endl;
+                break;
+            } else {
+                // Other error
+                std::cerr << "USB Gadget write error: " << strerror(errno) << std::endl;
+                usleep(1000);
+            }
+        }
+        
+        // Small delay to prevent CPU spinning if there's an issue
+        // Real polling rate is controlled by host (typically 1-8ms)
+        usleep(100);
+    }
+    
+    std::cout << "USB Gadget polling thread stopped" << std::endl;
 }

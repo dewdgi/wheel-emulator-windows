@@ -5,6 +5,9 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <thread>
+#include <mutex>
+#include <atomic>
 
 class Input; // Forward declaration
 
@@ -35,6 +38,11 @@ private:
     bool use_uhid;
     bool use_gadget;  // USB Gadget mode (proper USB device)
     
+    // USB Gadget polling thread (mimics real USB HID device behavior)
+    std::thread gadget_thread;
+    std::atomic<bool> gadget_running;
+    std::mutex state_mutex;  // Protects state when thread is active
+    
     // State
     float steering;
     float throttle;
@@ -49,6 +57,7 @@ private:
     bool CreateUInput();
     void SendUHIDReport();
     std::vector<uint8_t> BuildHIDReport();
+    void USBGadgetPollingThread();  // Thread that responds to host polls
     
     // UInput methods (legacy)
     void EmitEvent(uint16_t type, uint16_t code, int32_t value);
