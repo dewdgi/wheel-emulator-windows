@@ -85,22 +85,22 @@ bool GamepadDevice::Create() {
     abs_setup.absinfo.flat = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
     
-    // Brake pedal (ABS_Z) - G29 pedals: 32767 at rest, -32768 when fully pressed
+    // Brake pedal (ABS_Z) - Non-inverted for game compatibility: -32768 at rest, 32767 when fully pressed
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_Z;
     abs_setup.absinfo.minimum = -32768;
     abs_setup.absinfo.maximum = 32767;
-    abs_setup.absinfo.value = 32767;  // At rest = maximum
+    abs_setup.absinfo.value = -32768;  // At rest = minimum
     abs_setup.absinfo.fuzz = 0;
     abs_setup.absinfo.flat = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
     
-    // Throttle pedal (ABS_RZ) - G29 pedals: 32767 at rest, -32768 when fully pressed
+    // Throttle pedal (ABS_RZ) - Non-inverted for game compatibility: -32768 at rest, 32767 when fully pressed
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_RZ;
     abs_setup.absinfo.minimum = -32768;
     abs_setup.absinfo.maximum = 32767;
-    abs_setup.absinfo.value = 32767;  // At rest = maximum
+    abs_setup.absinfo.value = -32768;  // At rest = minimum
     abs_setup.absinfo.fuzz = 0;
     abs_setup.absinfo.flat = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
@@ -166,10 +166,10 @@ bool GamepadDevice::Create() {
 
 void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
     // Pure linear steering: each pixel of mouse movement adds to steering
-    // Sensitivity scaling adjusted: multiply by 2.5 so sensitivity=20 feels like old 50
-    // At sensitivity=20: 20*2.5 = 50 units per pixel
-    // At sensitivity=50: 50*2.5 = 125 units per pixel (very sensitive)
-    steering += delta * static_cast<float>(sensitivity) * 2.5f;
+    // Using sensitivity/5 for better feel (e.g., sensitivity=20 -> 4 units per pixel)
+    // At sensitivity=20: 4 units per pixel, full lock at 32768/4 = 8192 pixels (~8cm at 1000 DPI)
+    // At sensitivity=50: 10 units per pixel, full lock at 32768/10 = 3276 pixels (~3cm at 1000 DPI)
+    steering += delta * static_cast<float>(sensitivity) * 0.2f;
     
     // Clamp to int16_t range
     if (steering < -32768.0f) steering = -32768.0f;
@@ -243,10 +243,10 @@ void GamepadDevice::SendState() {
     // Send Y axis (unused for G29, always at maximum like real wheel)
     EmitEvent(EV_ABS, ABS_Y, 32767);
     
-    // Send throttle and brake as pedal axes (G29 standard)
-    // Real G29 pedals are inverted: 32767 at rest, -32768 when fully pressed
-    int16_t throttle_val = 32767 - static_cast<int16_t>(throttle * 655.35f);  // 100% = 65535 range
-    int16_t brake_val = 32767 - static_cast<int16_t>(brake * 655.35f);
+    // Send throttle and brake as pedal axes (non-inverted for game compatibility)
+    // -32768 at rest (0%), 32767 when fully pressed (100%)
+    int16_t throttle_val = -32768 + static_cast<int16_t>(throttle * 655.35f);
+    int16_t brake_val = -32768 + static_cast<int16_t>(brake * 655.35f);
     
     EmitEvent(EV_ABS, ABS_Z, brake_val);    // Brake pedal
     EmitEvent(EV_ABS, ABS_RZ, throttle_val); // Throttle pedal
@@ -298,9 +298,9 @@ void GamepadDevice::SendNeutral() {
     EmitEvent(EV_ABS, ABS_X, 0);
     EmitEvent(EV_ABS, ABS_Y, 32767);  // Match real G29
     
-    // Reset pedals to resting position (32767 = not pressed)
-    EmitEvent(EV_ABS, ABS_Z, 32767);
-    EmitEvent(EV_ABS, ABS_RZ, 32767);
+    // Reset pedals to resting position (non-inverted: -32768 = not pressed)
+    EmitEvent(EV_ABS, ABS_Z, -32768);
+    EmitEvent(EV_ABS, ABS_RZ, -32768);
     
     // Zero all 25 buttons
     EmitEvent(EV_KEY, BTN_TRIGGER, 0);

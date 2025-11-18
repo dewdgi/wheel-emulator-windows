@@ -222,8 +222,8 @@ void Config::SaveDefault(const char* path) {
     file << "# === AXES (Read-only, automatically handled) ===\n";
     file << "# ABS_X: Steering wheel (-32768 to 32767, mouse horizontal)\n";
     file << "# ABS_Y: Unused (always 32767, matches real G29)\n";
-    file << "# ABS_Z: Brake pedal (32767 at rest, -32768 when fully pressed, KEY_S)\n";
-    file << "# ABS_RZ: Throttle pedal (32767 at rest, -32768 when fully pressed, KEY_W)\n";
+    file << "# ABS_Z: Brake pedal (-32768 at rest, 32767 when fully pressed, KEY_S)\n";
+    file << "# ABS_RZ: Throttle pedal (-32768 at rest, 32767 when fully pressed, KEY_W)\n";
     file << "# ABS_HAT0X: D-Pad horizontal (-1, 0, 1) - Arrow LEFT/RIGHT\n";
     file << "# ABS_HAT0Y: D-Pad vertical (-1, 0, 1) - Arrow UP/DOWN\n\n";
     
