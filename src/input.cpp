@@ -7,6 +7,14 @@
 #include <sys/ioctl.h>
 #include <linux/input-event-codes.h>
 
+// Bit manipulation macros for input device capabilities
+#define BITS_PER_LONG (sizeof(long) * 8)
+#define NBITS(x) ((((x)-1)/BITS_PER_LONG)+1)
+#define OFF(x)  ((x)%BITS_PER_LONG)
+#define BIT(x)  (1UL<<OFF(x))
+#define LONG(x) ((x)/BITS_PER_LONG)
+#define test_bit(bit, array)    ((array[LONG(bit)] >> OFF(bit)) & 1)
+
 Input::Input() : kbd_fd(-1), mouse_fd(-1), prev_toggle(false) {
     memset(keys, 0, sizeof(keys));
 }
@@ -79,7 +87,7 @@ bool Input::DiscoverMouse() {
         }
         
         // Check for REL_X capability
-        unsigned long rel_bitmask[NLONGS(REL_MAX)] = {0};
+        unsigned long rel_bitmask[NBITS(REL_MAX)] = {0};
         ioctl(fd, EVIOCGBIT(EV_REL, sizeof(rel_bitmask)), rel_bitmask);
         
         if (test_bit(REL_X, rel_bitmask)) {

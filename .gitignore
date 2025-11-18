@@ -1,0 +1,22 @@
+# Object files
+*.o
+*.obj
+
+# Executables
+wheel-emulator
+*.exe
+
+# Build directories
+build/
+bin/
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+Thumbs.db

@@ -101,6 +101,14 @@ class Input {
     bool IsKeyPressed(int keycode) const;  // Encapsulated key state access
 };
 
+Bit manipulation macros (for capability checking):
+  #define BITS_PER_LONG (sizeof(long) * 8)
+  #define NBITS(x) ((((x)-1)/BITS_PER_LONG)+1)
+  #define OFF(x)  ((x)%BITS_PER_LONG)
+  #define BIT(x)  (1UL<<OFF(x))
+  #define LONG(x) ((x)/BITS_PER_LONG)
+  #define test_bit(bit, array) ((array[LONG(bit)] >> OFF(bit)) & 1)
+
 Keyboard discovery: enumerate /dev/input/event*, check name via EVIOCGNAME
 Mouse discovery: enumerate /dev/input/event*, check REL_X via EVIOCGBIT
 Events read non-blocking (O_NONBLOCK), all pending events consumed per cycle
@@ -162,7 +170,8 @@ ALGORITHMS
 
 Steering (Accumulative):
   delta_steering = delta_x * (800.0 * sensitivity / 100.0)
-  steering = clamp(steering + delta_steering, -32768, 32767)
+  new_steering = steering + delta_steering (as int32_t)
+  steering = clamp(new_steering, -32768, 32767) (as int16_t)
 
 Throttle/Brake (Analog Ramping):
   if pressed: value = min(100.0, value + 3.0)

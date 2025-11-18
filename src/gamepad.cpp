@@ -100,7 +100,13 @@ bool GamepadDevice::Create() {
 
 void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
     float delta_steering = delta * (800.0f * sensitivity / 100.0f);
-    steering = ClampSteering(steering + static_cast<int16_t>(delta_steering));
+    int32_t new_steering = steering + static_cast<int32_t>(delta_steering);
+    
+    // Clamp to int16_t range
+    if (new_steering < -32768) new_steering = -32768;
+    if (new_steering > 32767) new_steering = 32767;
+    
+    steering = static_cast<int16_t>(new_steering);
 }
 
 void GamepadDevice::UpdateThrottle(bool pressed) {
@@ -194,7 +200,6 @@ void GamepadDevice::EmitEvent(uint16_t type, uint16_t code, int32_t value) {
 }
 
 int16_t GamepadDevice::ClampSteering(int16_t value) {
-    if (value < -32768) return -32768;
-    if (value > 32767) return 32767;
+    // int16_t is already in range [-32768, 32767], no clamping needed
     return value;
 }
