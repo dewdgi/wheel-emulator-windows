@@ -118,12 +118,19 @@ Bit manipulation macros (for capability checking):
   #define test_bit(bit, array) ((array[LONG(bit)] >> OFF(bit)) & 1)
 
 Keyboard discovery: enumerate /dev/input/event*, check name via EVIOCGNAME
+  - Priority-based selection:
+    * Priority 100: Actual keyboard devices (name contains " keyboard")
+    * Priority 50:  Generic devices with "keyboard" in name
+    * Priority 10:  Consumer Control, System Control devices
+  - Selects highest priority keyboard automatically
 Mouse discovery: enumerate /dev/input/event*, check REL_X via EVIOCGBIT
+  - Excludes keyboard devices that have pointer capabilities
   - Priority-based selection to avoid touchpads/virtual devices:
-    * Priority 100: Wireless/USB mice (Beken, Logitech, Razer, etc.)
+    * Priority 100: Real mice ("mouse", "wireless device", "beken")
     * Priority 50:  Generic devices with REL_X
     * Priority 20:  Virtual mouse devices from touchpads (UNIW, ELAN, Synaptics)
     * Priority 10:  Touchpad devices
+    * Priority 5:   Consumer Control, System Control devices
   - Selects highest priority device automatically
 Events read non-blocking (O_NONBLOCK), all pending events consumed per cycle
 Keys stored as bool array indexed by event.code (KEY_W, KEY_S, KEY_LEFTCTRL, etc.)
@@ -196,10 +203,16 @@ while (true) {
 ALGORITHMS
 =============================================================================
 
-Steering (Accumulative):
-  delta_steering = delta_x * (800.0 * sensitivity / 100.0)
+Steering (Accumulative, Linear):
+  delta_steering = delta_x * (sensitivity / 100.0)
   new_steering = steering + delta_steering (as int32_t)
   steering = clamp(new_steering, -32768, 32767) (as int16_t)
+  
+  Note: Sensitivity is linear multiplier (1-100%):
+  - At 5%: each pixel of mouse movement adds 0.05 to steering
+  - At 100%: each pixel adds 1.0 to steering
+  - Requires ~32768 pixels to reach full lock at 100% sensitivity
+  - At 5% (recommended), requires ~655,000 pixels for full lock
 
 Throttle/Brake (Analog Ramping):
   if pressed: value = min(100.0, value + 3.0)

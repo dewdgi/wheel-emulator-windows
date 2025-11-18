@@ -33,6 +33,14 @@ bool Input::DiscoverKeyboard() {
         return false;
     }
     
+    struct KeyboardCandidate {
+        std::string path;
+        std::string name;
+        int priority;
+        int fd;
+    };
+    std::vector<KeyboardCandidate> candidates;
+    
     struct dirent* entry;
     while ((entry = readdir(dir)) != nullptr) {
         if (strncmp(entry->d_name, "event", 5) != 0) {
@@ -55,18 +63,46 @@ bool Input::DiscoverKeyboard() {
         }
         
         if (name_lower.find("keyboard") != std::string::npos) {
-            kbd_fd = fd;
-            std::cout << "Found keyboard: " << name << " at " << path << std::endl;
-            closedir(dir);
-            return true;
+            int priority = 50; // default
+            
+            // Deprioritize consumer control and system control
+            if (name_lower.find("consumer control") != std::string::npos ||
+                name_lower.find("system control") != std::string::npos) {
+                priority = 10;
+            }
+            // Prioritize actual keyboard devices
+            else if (name_lower.find(" keyboard") != std::string::npos) {
+                priority = 100;
+            }
+            
+            candidates.push_back({path, name, priority, fd});
+        } else {
+            close(fd);
         }
-        
-        close(fd);
     }
     
     closedir(dir);
-    std::cerr << "No keyboard found" << std::endl;
-    return false;
+    
+    if (candidates.empty()) {
+        std::cerr << "No keyboard found" << std::endl;
+        return false;
+    }
+    
+    // Sort by priority (highest first)
+    std::sort(candidates.begin(), candidates.end(),
+              [](const KeyboardCandidate& a, const KeyboardCandidate& b) {
+                  return a.priority > b.priority;
+              });
+    
+    // Close all except the best one
+    for (size_t i = 1; i < candidates.size(); i++) {
+        close(candidates[i].fd);
+    }
+    
+    // Use the highest priority device
+    kbd_fd = candidates[0].fd;
+    std::cout << "Found keyboard: " << candidates[0].name << " at " << candidates[0].path << std::endl;
+    return true;
 }
 
 bool Input::DiscoverMouse() {
@@ -108,6 +144,12 @@ bool Input::DiscoverMouse() {
                 c = tolower(c);
             }
             
+            // Skip keyboard devices that have pointer capabilities
+            if (name_lower.find("keyboard") != std::string::npos) {
+                close(fd);
+                continue;
+            }
+            
             // Prioritize: avoid touchpads and virtual devices
             int priority = 50; // default
             
@@ -121,12 +163,15 @@ bool Input::DiscoverMouse() {
                      name_lower.find("synaptics") != std::string::npos) {
                 priority = 20;
             }
-            // Prioritize USB/wireless mice
-            else if (name_lower.find("wireless") != std::string::npos ||
-                     name_lower.find("usb") != std::string::npos ||
-                     name_lower.find("beken") != std::string::npos ||
-                     name_lower.find("logitech") != std::string::npos ||
-                     name_lower.find("razer") != std::string::npos) {
+            // Deprioritize consumer control / system control devices
+            else if (name_lower.find("consumer control") != std::string::npos ||
+                     name_lower.find("system control") != std::string::npos) {
+                priority = 5;
+            }
+            // Prioritize real mice - check for "mouse" or "wireless device" in name
+            else if (name_lower.find("mouse") != std::string::npos ||
+                     (name_lower.find("wireless") != std::string::npos && name_lower.find("device") != std::string::npos) ||
+                     name_lower.find("beken") != std::string::npos) {
                 priority = 100;
             }
             

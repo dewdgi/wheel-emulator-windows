@@ -72,9 +72,12 @@ KEY_H=BTN_TL
 ### Sensitivity
 
 Values range from 1 to 100:
-- Lower values = less sensitive steering
-- Higher values = more sensitive steering
+- Linear scaling: sensitivity directly multiplies mouse movement
+- Lower values (1-10) = very low sensitivity, requires large mouse movements
+- Medium values (20-50) = balanced sensitivity
+- Higher values (80-100) = high sensitivity, small movements create large steering
 - Default: 20
+- Recommended for racing: 5-20 depending on mouse DPI
 
 ### Button Mapping
 
@@ -87,9 +90,12 @@ Available keys: Any KEY_* from Linux input event codes (e.g., KEY_Q, KEY_E, KEY_
 
 ## How It Works
 
-1. Discovers keyboard and mouse from `/dev/input/event*`
+1. Auto-discovers keyboard and mouse from `/dev/input/event*`
+   - Prioritizes real keyboards over consumer control devices
+   - Prioritizes real mice, excludes keyboard pointer devices
+   - Filters out touchpads and virtual input devices
 2. Creates a virtual Xbox 360 controller via `/dev/uinput`
-3. Grabs keyboard and mouse for exclusive access
+3. When enabled, grabs keyboard and mouse for exclusive access
 4. Reads input events and translates them to gamepad events
 5. Sends gamepad state at 1000 Hz
 

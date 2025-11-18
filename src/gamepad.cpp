@@ -123,7 +123,9 @@ bool GamepadDevice::Create() {
 }
 
 void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
-    float delta_steering = delta * (800.0f * sensitivity / 100.0f);
+    // Linear steering: sensitivity is a direct multiplier (1-100%)
+    // At 5% sensitivity: delta * 0.05, at 100%: delta * 1.0
+    float delta_steering = delta * (sensitivity / 100.0f);
     int32_t new_steering = steering + static_cast<int32_t>(delta_steering);
     
     // Clamp to int16_t range
