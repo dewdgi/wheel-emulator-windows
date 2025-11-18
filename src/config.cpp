@@ -22,7 +22,7 @@ bool Config::Load() {
     std::cout << "Default config saved. Please edit " << system_config << " and run --detect to configure devices." << std::endl;
     
     // Set default values
-    sensitivity = 50;
+    sensitivity = 20;
     
     // Set default button mappings (for reference - hardcoded in gamepad.cpp)
     button_map["KEY_Q"] = BTN_TRIGGER;
@@ -170,7 +170,7 @@ void Config::SaveDefault(const char* path) {
     file << "mouse=\n\n";
     
     file << "[sensitivity]\n";
-    file << "sensitivity=50\n\n";
+    file << "sensitivity=20\n\n";
     
     file << "[controls]\n";
     file << "# Logitech G29 Racing Wheel Controls\n";
@@ -183,37 +183,41 @@ void Config::SaveDefault(const char* path) {
     
     file << "[button_mapping]\n";
     file << "# Logitech G29 Racing Wheel - Button Mappings (HARDCODED - for reference only)\n";
-    file << "# Format: EMULATED_BUTTON=KEYBOARD_KEY\n";
     file << "# Note: These mappings are currently hardcoded in the source code.\n";
     file << "#       Editing this section will NOT change the actual mappings.\n";
-    file << "#       This is for documentation purposes.\n\n";
+    file << "#       This is for documentation and game binding reference.\n\n";
     
     file << "# === CURRENT BUTTON MAPPINGS ===\n";
-    file << "# Button 1:  BTN_TRIGGER        = KEY_Q\n";
-    file << "# Button 2:  BTN_THUMB          = KEY_E\n";
-    file << "# Button 3:  BTN_THUMB2         = KEY_F\n";
-    file << "# Button 4:  BTN_TOP            = KEY_G\n";
-    file << "# Button 5:  BTN_TOP2           = KEY_H\n";
-    file << "# Button 6:  BTN_PINKIE         = KEY_R\n";
-    file << "# Button 7:  BTN_BASE           = KEY_T\n";
-    file << "# Button 8:  BTN_BASE2          = KEY_Y\n";
-    file << "# Button 9:  BTN_BASE3          = KEY_U\n";
-    file << "# Button 10: BTN_BASE4          = KEY_I\n";
-    file << "# Button 11: BTN_BASE5          = KEY_O\n";
-    file << "# Button 12: BTN_BASE6          = KEY_P\n";
-    file << "# Button 13: BTN_DEAD           = KEY_1\n";
-    file << "# Button 14: BTN_TRIGGER_HAPPY1 = KEY_2\n";
-    file << "# Button 15: BTN_TRIGGER_HAPPY2 = KEY_3\n";
-    file << "# Button 16: BTN_TRIGGER_HAPPY3 = KEY_4\n";
-    file << "# Button 17: BTN_TRIGGER_HAPPY4 = KEY_5\n";
-    file << "# Button 18: BTN_TRIGGER_HAPPY5 = KEY_6\n";
-    file << "# Button 19: BTN_TRIGGER_HAPPY6 = KEY_7\n";
-    file << "# Button 20: BTN_TRIGGER_HAPPY7 = KEY_8\n";
-    file << "# Button 21: BTN_TRIGGER_HAPPY8 = KEY_9\n";
-    file << "# Button 22: BTN_TRIGGER_HAPPY9 = KEY_0\n";
-    file << "# Button 23: BTN_TRIGGER_HAPPY10 = KEY_LEFTSHIFT\n";
-    file << "# Button 24: BTN_TRIGGER_HAPPY11 = KEY_SPACE\n";
-    file << "# Button 25: BTN_TRIGGER_HAPPY12 = KEY_TAB\n\n";
+    file << "# Recommended Game Actions (customize in your game settings)\n\n";
+    
+    file << "# Button 1:  KEY_Q          (Shift Down / Downshift)\n";
+    file << "# Button 2:  KEY_E          (Shift Up / Upshift)\n";
+    file << "# Button 3:  KEY_F          (Flash Headlights / High Beam Toggle)\n";
+    file << "# Button 4:  KEY_G          (Horn)\n";
+    file << "# Button 5:  KEY_H          (Toggle Headlights)\n";
+    file << "# Button 6:  KEY_R          (Look Right / Change Camera Right)\n";
+    file << "# Button 7:  KEY_T          (Telemetry / Tire Info)\n";
+    file << "# Button 8:  KEY_Y          (Cycle HUD / Dashboard View)\n";
+    file << "# Button 9:  KEY_U          (Pit Limiter)\n";
+    file << "# Button 10: KEY_I          (Ignition / Engine Start)\n";
+    file << "# Button 11: KEY_O          (Wiper / Rain Light)\n";
+    file << "# Button 12: KEY_P          (Pause / Photo Mode)\n";
+    file << "# Button 13: KEY_1          (TC (Traction Control) Down)\n";
+    file << "# Button 14: KEY_2          (TC Up)\n";
+    file << "# Button 15: KEY_3          (ABS Down)\n";
+    file << "# Button 16: KEY_4          (ABS Up)\n";
+    file << "# Button 17: KEY_5          (Brake Bias Forward)\n";
+    file << "# Button 18: KEY_6          (Brake Bias Rearward)\n";
+    file << "# Button 19: KEY_7          (Engine Map / Fuel Mix -1)\n";
+    file << "# Button 20: KEY_8          (Engine Map / Fuel Mix +1)\n";
+    file << "# Button 21: KEY_9          (Request Pit Stop)\n";
+    file << "# Button 22: KEY_0          (Leaderboard / Standings)\n";
+    file << "# Button 23: KEY_LEFTSHIFT  (Look Left / Change Camera Left)\n";
+    file << "# Button 24: KEY_SPACE      (Handbrake / E-Brake)\n";
+    file << "# Button 25: KEY_TAB        (Change Camera / Cycle View)\n\n";
+    
+    file << "# Note: Map these buttons to game functions via in-game controller settings.\n";
+    file << "# The game will see this as a 'Logitech G29 Driving Force Racing Wheel'.\n\n";
     
     file << "# === AXES (Read-only, automatically handled) ===\n";
     file << "# ABS_X: Steering wheel (-32768 to 32767, mouse horizontal)\n";

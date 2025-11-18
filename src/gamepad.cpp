@@ -245,9 +245,10 @@ void GamepadDevice::SendState() {
     EmitEvent(EV_ABS, ABS_Y, 32767);
     
     // Send throttle and brake as pedal axes (G29 standard)
-    // Real G29 pedals are inverted: 32767 at rest, -32768 when fully pressed
-    int16_t throttle_val = 32767 - static_cast<int16_t>(throttle * 655.35f);  // 100% = 65535 range
-    int16_t brake_val = 32767 - static_cast<int16_t>(brake * 655.35f);
+    // Real G29 pedals: 32767 at rest (0%), -32768 when fully pressed (100%)
+    // Formula: 32767 - (percentage * 655.35) gives us the range
+    int16_t throttle_val = static_cast<int16_t>(32767 - (throttle * 655.35f));
+    int16_t brake_val = static_cast<int16_t>(32767 - (brake * 655.35f));
     
     EmitEvent(EV_ABS, ABS_Z, brake_val);    // Brake pedal
     EmitEvent(EV_ABS, ABS_RZ, throttle_val); // Throttle pedal
