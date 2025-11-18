@@ -16,7 +16,7 @@ wheel-emulator/
     ├── main.cpp         # Entry point, main loop, device detection mode
     ├── config.h/cpp     # Configuration loading with device paths
     ├── input.h/cpp      # Keyboard/mouse reading, device discovery
-    └── gamepad.h/cpp    # Virtual Xbox 360 controller
+    └── gamepad.h/cpp    # Virtual Logitech G29 Racing Wheel
 ```
 
 ---

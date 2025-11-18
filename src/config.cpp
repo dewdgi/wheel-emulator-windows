@@ -22,7 +22,7 @@ bool Config::Load() {
     std::cout << "Default config saved. Please edit " << system_config << " and run --detect to configure devices." << std::endl;
     
     // Set default values
-    sensitivity = 20;
+    sensitivity = 50;
     
     // Set default button mappings (for reference - hardcoded in gamepad.cpp)
     button_map["KEY_Q"] = BTN_TRIGGER;
@@ -170,7 +170,7 @@ void Config::SaveDefault(const char* path) {
     file << "mouse=\n\n";
     
     file << "[sensitivity]\n";
-    file << "sensitivity=20\n\n";
+    file << "sensitivity=50\n\n";
     
     file << "[controls]\n";
     file << "# Logitech G29 Racing Wheel Controls\n";
@@ -222,8 +222,8 @@ void Config::SaveDefault(const char* path) {
     file << "# === AXES (Read-only, automatically handled) ===\n";
     file << "# ABS_X: Steering wheel (-32768 to 32767, mouse horizontal)\n";
     file << "# ABS_Y: Unused (always 32767, matches real G29)\n";
-    file << "# ABS_Z: Brake pedal (-32768 at rest, 32767 when fully pressed, KEY_S)\n";
-    file << "# ABS_RZ: Throttle pedal (-32768 at rest, 32767 when fully pressed, KEY_W)\n";
+    file << "# ABS_Z: Brake pedal (32767 at rest, -32768 when fully pressed, KEY_S)\n";
+    file << "# ABS_RZ: Throttle pedal (32767 at rest, -32768 when fully pressed, KEY_W)\n";
     file << "# ABS_HAT0X: D-Pad horizontal (-1, 0, 1) - Arrow LEFT/RIGHT\n";
     file << "# ABS_HAT0Y: D-Pad vertical (-1, 0, 1) - Arrow UP/DOWN\n\n";
     
@@ -233,6 +233,9 @@ void Config::SaveDefault(const char* path) {
     file << "# Brake: Hold KEY_S (analog ramping 0-100%)\n";
     file << "# D-Pad: Arrow keys (UP/DOWN/LEFT/RIGHT)\n";
     file << "# Toggle Emulation: CTRL+M (enable/disable input grabbing)\n";
+    file << "#\n";
+    file << "# NOTE: Real G29 has INVERTED pedals (32767=rest, -32768=pressed).\n";
+    file << "#       Enable 'Invert Pedals' option in your game settings if needed.\n";
 }
 
 bool Config::UpdateDevices(const std::string& kbd_path, const std::string& mouse_path) {
