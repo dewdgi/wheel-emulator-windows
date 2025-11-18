@@ -204,17 +204,9 @@ bool GamepadDevice::CreateUSBGadget() {
     
     const char* hidg_dev = "/dev/hidg0";
     
-    // Check if already set up
-    if (access(hidg_dev, F_OK) == 0) {
-        fd = open(hidg_dev, O_RDWR | O_NONBLOCK);
-        if (fd >= 0) {
-            std::cout << "USB Gadget device already configured and opened" << std::endl;
-            std::cout << "Real USB Logitech G29 device (VID:046d PID:c24f)" << std::endl;
-            use_gadget = true;
-            use_uhid = true;
-            return true;
-        }
-    }
+    // ALWAYS recreate the gadget to ensure correct configuration
+    // (don't reuse old config which might have wrong report_length)
+    std::cout << "Setting up USB Gadget with fresh configuration..." << std::endl;
     
     // Check if configfs is mounted, if not try to mount it
     if (access("/sys/kernel/config", F_OK) != 0) {
@@ -274,7 +266,7 @@ bool GamepadDevice::CreateUSBGadget() {
           "echo 'G29 Driving Force Racing Wheel' > strings/0x409/product && "
           "echo '000000000001' > strings/0x409/serialnumber && "
           "mkdir -p functions/hid.usb0 && cd functions/hid.usb0 && "
-          "echo 1 > protocol && echo 1 > subclass && echo 16 > report_length && "
+          "echo 1 > protocol && echo 1 > subclass && echo 13 > report_length && "
           "printf '" + descriptor_hex + "' > report_desc && "
           "cd /sys/kernel/config/usb_gadget/g29wheel && "
           "mkdir -p configs/c.1/strings/0x409 && "
@@ -614,16 +606,15 @@ void GamepadDevice::SendState() {
 }
 
 std::vector<uint8_t> GamepadDevice::BuildHIDReport() {
-    // G29 HID Report structure (16 bytes total to match real G29):
+    // G29 HID Report structure (13 bytes total as defined by descriptor):
     // Byte 0-1: X (Steering) - 16-bit, little endian, 0-65535, center=32768
     // Byte 2-3: Y (Unused) - 16-bit, constant 65535
     // Byte 4-5: Z (Brake) - 16-bit, little endian, inverted: 65535=rest, 0=pressed  
     // Byte 6-7: Rz (Throttle) - 16-bit, little endian, inverted: 65535=rest, 0=pressed
     // Byte 8: HAT switch (4 bits) + padding (4 bits)
     // Byte 9-12: Buttons (25 bits) + padding (7 bits)
-    // Byte 13-15: Padding to 16 bytes
     
-    std::vector<uint8_t> report(16, 0);
+    std::vector<uint8_t> report(13, 0);
     
     // X axis: Steering - convert from -32768..32767 to 0..65535
     uint16_t steering_u = static_cast<uint16_t>(static_cast<int16_t>(steering) + 32768);
@@ -689,8 +680,6 @@ std::vector<uint8_t> GamepadDevice::BuildHIDReport() {
     report[10] = (button_bits >> 8) & 0xFF;
     report[11] = (button_bits >> 16) & 0xFF;
     report[12] = (button_bits >> 24) & 0xFF;
-    
-    // Bytes 13-15 are padding (already zeroed)
     
     return report;
 }
