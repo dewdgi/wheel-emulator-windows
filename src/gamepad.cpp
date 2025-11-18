@@ -29,15 +29,37 @@ bool GamepadDevice::Create() {
     ioctl(fd, UI_SET_EVBIT, EV_KEY);
     ioctl(fd, UI_SET_EVBIT, EV_ABS);
     
-    // Enable buttons
-    ioctl(fd, UI_SET_KEYBIT, BTN_A);
-    ioctl(fd, UI_SET_KEYBIT, BTN_B);
-    ioctl(fd, UI_SET_KEYBIT, BTN_X);
-    ioctl(fd, UI_SET_KEYBIT, BTN_Y);
-    ioctl(fd, UI_SET_KEYBIT, BTN_TL);      // Left bumper
-    ioctl(fd, UI_SET_KEYBIT, BTN_TR);      // Right bumper
-    ioctl(fd, UI_SET_KEYBIT, BTN_SELECT);
-    ioctl(fd, UI_SET_KEYBIT, BTN_START);
+    // Enable joystick buttons (matching real G29 wheel - 25 buttons total)
+    // First 10 buttons using standard joystick codes
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER);  // Button 1
+    ioctl(fd, UI_SET_KEYBIT, BTN_THUMB);    // Button 2
+    ioctl(fd, UI_SET_KEYBIT, BTN_THUMB2);   // Button 3
+    ioctl(fd, UI_SET_KEYBIT, BTN_TOP);      // Button 4
+    ioctl(fd, UI_SET_KEYBIT, BTN_TOP2);     // Button 5
+    ioctl(fd, UI_SET_KEYBIT, BTN_PINKIE);   // Button 6
+    ioctl(fd, UI_SET_KEYBIT, BTN_BASE);     // Button 7
+    ioctl(fd, UI_SET_KEYBIT, BTN_BASE2);    // Button 8
+    ioctl(fd, UI_SET_KEYBIT, BTN_BASE3);    // Button 9
+    ioctl(fd, UI_SET_KEYBIT, BTN_BASE4);    // Button 10
+    
+    // Additional buttons
+    ioctl(fd, UI_SET_KEYBIT, BTN_BASE5);    // Button 11
+    ioctl(fd, UI_SET_KEYBIT, BTN_BASE6);    // Button 12
+    ioctl(fd, UI_SET_KEYBIT, BTN_DEAD);     // Button 13
+    
+    // Extra buttons using BTN_TRIGGER_HAPPY range for total 25
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY1);  // Button 14
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY2);  // Button 15
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY3);  // Button 16
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY4);  // Button 17
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY5);  // Button 18
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY6);  // Button 19
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY7);  // Button 20
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY8);  // Button 21
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY9);  // Button 22
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY10); // Button 23
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY11); // Button 24
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY12); // Button 25
     
     // Setup axes
     struct uinput_abs_setup abs_setup;
@@ -62,7 +84,7 @@ bool GamepadDevice::Create() {
     abs_setup.absinfo.flat = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
     
-    // Brake pedal (ABS_Z - left trigger)
+    // Brake pedal (ABS_Z)
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_Z;
     abs_setup.absinfo.minimum = 0;
@@ -72,27 +94,7 @@ bool GamepadDevice::Create() {
     abs_setup.absinfo.flat = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
     
-    // RX axis (unused for G29)
-    memset(&abs_setup, 0, sizeof(abs_setup));
-    abs_setup.code = ABS_RX;
-    abs_setup.absinfo.minimum = -32768;
-    abs_setup.absinfo.maximum = 32767;
-    abs_setup.absinfo.value = 0;
-    abs_setup.absinfo.fuzz = 0;
-    abs_setup.absinfo.flat = 0;
-    ioctl(fd, UI_ABS_SETUP, &abs_setup);
-    
-    // RY axis (unused for G29)
-    memset(&abs_setup, 0, sizeof(abs_setup));
-    abs_setup.code = ABS_RY;
-    abs_setup.absinfo.minimum = -32768;
-    abs_setup.absinfo.maximum = 32767;
-    abs_setup.absinfo.value = 0;
-    abs_setup.absinfo.fuzz = 0;
-    abs_setup.absinfo.flat = 0;
-    ioctl(fd, UI_ABS_SETUP, &abs_setup);
-    
-    // Throttle pedal (ABS_RZ - right trigger)
+    // Throttle pedal (ABS_RZ)
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_RZ;
     abs_setup.absinfo.minimum = 0;
@@ -164,12 +166,19 @@ void GamepadDevice::UpdateBrake(bool pressed) {
 }
 
 void GamepadDevice::UpdateButtons(const Input& input) {
-    // These will be mapped from config
-    buttons["BTN_A"] = input.IsKeyPressed(KEY_Q);
-    buttons["BTN_B"] = input.IsKeyPressed(KEY_E);
-    buttons["BTN_X"] = input.IsKeyPressed(KEY_F);
-    buttons["BTN_Y"] = input.IsKeyPressed(KEY_G);
-    buttons["BTN_TL"] = input.IsKeyPressed(KEY_H);
+    // Map keyboard keys to wheel buttons (joystick style)
+    buttons["BTN_TRIGGER"] = input.IsKeyPressed(KEY_Q);
+    buttons["BTN_THUMB"] = input.IsKeyPressed(KEY_E);
+    buttons["BTN_THUMB2"] = input.IsKeyPressed(KEY_F);
+    buttons["BTN_TOP"] = input.IsKeyPressed(KEY_G);
+    buttons["BTN_TOP2"] = input.IsKeyPressed(KEY_H);
+    buttons["BTN_PINKIE"] = input.IsKeyPressed(KEY_R);
+    buttons["BTN_BASE"] = input.IsKeyPressed(KEY_T);
+    buttons["BTN_BASE2"] = input.IsKeyPressed(KEY_Y);
+    buttons["BTN_BASE3"] = input.IsKeyPressed(KEY_U);
+    buttons["BTN_BASE4"] = input.IsKeyPressed(KEY_I);
+    buttons["BTN_BASE5"] = input.IsKeyPressed(KEY_O);
+    buttons["BTN_BASE6"] = input.IsKeyPressed(KEY_P);
 }
 
 void GamepadDevice::UpdateDPad(const Input& input) {
@@ -191,10 +200,6 @@ void GamepadDevice::SendState() {
     // Send Y axis (unused for G29, always 0)
     EmitEvent(EV_ABS, ABS_Y, 0);
     
-    // Send RX/RY axes (unused for G29, always 0)
-    EmitEvent(EV_ABS, ABS_RX, 0);
-    EmitEvent(EV_ABS, ABS_RY, 0);
-    
     // Send throttle and brake as pedal axes (G29 standard)
     uint8_t throttle_val = static_cast<uint8_t>(throttle * 2.55f);
     uint8_t brake_val = static_cast<uint8_t>(brake * 2.55f);
@@ -202,12 +207,19 @@ void GamepadDevice::SendState() {
     EmitEvent(EV_ABS, ABS_Z, brake_val);    // Brake pedal
     EmitEvent(EV_ABS, ABS_RZ, throttle_val); // Throttle pedal
     
-    // Send buttons
-    EmitEvent(EV_KEY, BTN_A, buttons["BTN_A"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_B, buttons["BTN_B"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_X, buttons["BTN_X"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_Y, buttons["BTN_Y"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TL, buttons["BTN_TL"] ? 1 : 0);
+    // Send wheel buttons (joystick style - 12 primary buttons)
+    EmitEvent(EV_KEY, BTN_TRIGGER, buttons["BTN_TRIGGER"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_THUMB, buttons["BTN_THUMB"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_THUMB2, buttons["BTN_THUMB2"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_TOP, buttons["BTN_TOP"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_TOP2, buttons["BTN_TOP2"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_PINKIE, buttons["BTN_PINKIE"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_BASE, buttons["BTN_BASE"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_BASE2, buttons["BTN_BASE2"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_BASE3, buttons["BTN_BASE3"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_BASE4, buttons["BTN_BASE4"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_BASE5, buttons["BTN_BASE5"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_BASE6, buttons["BTN_BASE6"] ? 1 : 0);
     
     // Send D-Pad
     EmitEvent(EV_ABS, ABS_HAT0X, dpad_x);
@@ -223,17 +235,26 @@ void GamepadDevice::SendNeutral() {
     // Zero all axes (center steering wheel)
     EmitEvent(EV_ABS, ABS_X, 0);
     EmitEvent(EV_ABS, ABS_Y, 0);
-    EmitEvent(EV_ABS, ABS_RX, 0);
-    EmitEvent(EV_ABS, ABS_RY, 0);
     
     // Zero pedals
     EmitEvent(EV_ABS, ABS_Z, 0);
     EmitEvent(EV_ABS, ABS_RZ, 0);
-    EmitEvent(EV_KEY, BTN_A, 0);
-    EmitEvent(EV_KEY, BTN_B, 0);
-    EmitEvent(EV_KEY, BTN_X, 0);
-    EmitEvent(EV_KEY, BTN_Y, 0);
-    EmitEvent(EV_KEY, BTN_TL, 0);
+    
+    // Zero all buttons
+    EmitEvent(EV_KEY, BTN_TRIGGER, 0);
+    EmitEvent(EV_KEY, BTN_THUMB, 0);
+    EmitEvent(EV_KEY, BTN_THUMB2, 0);
+    EmitEvent(EV_KEY, BTN_TOP, 0);
+    EmitEvent(EV_KEY, BTN_TOP2, 0);
+    EmitEvent(EV_KEY, BTN_PINKIE, 0);
+    EmitEvent(EV_KEY, BTN_BASE, 0);
+    EmitEvent(EV_KEY, BTN_BASE2, 0);
+    EmitEvent(EV_KEY, BTN_BASE3, 0);
+    EmitEvent(EV_KEY, BTN_BASE4, 0);
+    EmitEvent(EV_KEY, BTN_BASE5, 0);
+    EmitEvent(EV_KEY, BTN_BASE6, 0);
+    
+    // Zero D-Pad
     EmitEvent(EV_ABS, ABS_HAT0X, 0);
     EmitEvent(EV_ABS, ABS_HAT0Y, 0);
     EmitEvent(EV_SYN, SYN_REPORT, 0);

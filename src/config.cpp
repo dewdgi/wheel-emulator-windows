@@ -24,15 +24,19 @@ bool Config::Load() {
     // Set default values
     sensitivity = 50;
     
-    // Set default values
-    sensitivity = 50;
-    
-    // Set default button mappings
-    button_map["KEY_Q"] = BTN_A;
-    button_map["KEY_E"] = BTN_B;
-    button_map["KEY_F"] = BTN_X;
-    button_map["KEY_G"] = BTN_Y;
-    button_map["KEY_H"] = BTN_TL;
+    // Set default button mappings (joystick style for wheel)
+    button_map["KEY_Q"] = BTN_TRIGGER;
+    button_map["KEY_E"] = BTN_THUMB;
+    button_map["KEY_F"] = BTN_THUMB2;
+    button_map["KEY_G"] = BTN_TOP;
+    button_map["KEY_H"] = BTN_TOP2;
+    button_map["KEY_R"] = BTN_PINKIE;
+    button_map["KEY_T"] = BTN_BASE;
+    button_map["KEY_Y"] = BTN_BASE2;
+    button_map["KEY_U"] = BTN_BASE3;
+    button_map["KEY_I"] = BTN_BASE4;
+    button_map["KEY_O"] = BTN_BASE5;
+    button_map["KEY_P"] = BTN_BASE6;
     
     return true;
 }
@@ -101,22 +105,24 @@ void Config::ParseINI(const std::string& content) {
                 sensitivity = val;
             }
         } else if (section == "button_mapping") {
-            // Map key name to button code
+            // Map button code to key name (format: BUTTON=KEY)
             int button_code = -1;
-            if (value == "BTN_A") button_code = BTN_A;
-            else if (value == "BTN_B") button_code = BTN_B;
-            else if (value == "BTN_X") button_code = BTN_X;
-            else if (value == "BTN_Y") button_code = BTN_Y;
-            else if (value == "BTN_TL") button_code = BTN_TL;
-            else if (value == "BTN_TR") button_code = BTN_TR;
-            else if (value == "BTN_SELECT") button_code = BTN_SELECT;
-            else if (value == "BTN_START") button_code = BTN_START;
-            else if (value == "BTN_THUMBL") button_code = BTN_THUMBL;
-            else if (value == "BTN_THUMBR") button_code = BTN_THUMBR;
-            else if (value == "BTN_MODE") button_code = BTN_MODE;
+            if (key == "BTN_TRIGGER") button_code = BTN_TRIGGER;
+            else if (key == "BTN_THUMB") button_code = BTN_THUMB;
+            else if (key == "BTN_THUMB2") button_code = BTN_THUMB2;
+            else if (key == "BTN_TOP") button_code = BTN_TOP;
+            else if (key == "BTN_TOP2") button_code = BTN_TOP2;
+            else if (key == "BTN_PINKIE") button_code = BTN_PINKIE;
+            else if (key == "BTN_BASE") button_code = BTN_BASE;
+            else if (key == "BTN_BASE2") button_code = BTN_BASE2;
+            else if (key == "BTN_BASE3") button_code = BTN_BASE3;
+            else if (key == "BTN_BASE4") button_code = BTN_BASE4;
+            else if (key == "BTN_BASE5") button_code = BTN_BASE5;
+            else if (key == "BTN_BASE6") button_code = BTN_BASE6;
+            else if (key == "BTN_DEAD") button_code = BTN_DEAD;
             
             if (button_code != -1) {
-                button_map[key] = button_code;
+                button_map[value] = button_code;
             }
         }
     }
@@ -141,24 +147,64 @@ void Config::SaveDefault(const char* path) {
     file << "[sensitivity]\n";
     file << "sensitivity=50\n\n";
     
+    file << "[controls]\n";
+    file << "# Logitech G29 Racing Wheel Controls\n";
+    file << "# Format: CONTROL=KEYBOARD_KEY or MOUSE_BUTTON\n\n";
+    file << "# Primary Controls (Hardcoded)\n";
+    file << "# Steering: Mouse horizontal movement\n";
+    file << "# Throttle: Hold KEY_W to increase (0-100%)\n";
+    file << "# Brake: Hold KEY_S to increase (0-100%)\n";
+    file << "# D-Pad: Arrow keys (KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT)\n\n";
+    
     file << "[button_mapping]\n";
-    file << "# Xbox 360 Controller Button Mapping\n";
-    file << "# Available buttons: BTN_A, BTN_B, BTN_X, BTN_Y\n";
-    file << "#                   BTN_TL (L1), BTN_TR (R1)\n";
-    file << "#                   BTN_SELECT (Back), BTN_START\n";
-    file << "#                   BTN_THUMBL (L3), BTN_THUMBR (R3)\n";
-    file << "#                   BTN_MODE (Xbox button)\n\n";
-    file << "KEY_Q=BTN_A\n";
-    file << "KEY_E=BTN_B\n";
-    file << "KEY_F=BTN_X\n";
-    file << "KEY_G=BTN_Y\n";
-    file << "KEY_H=BTN_TL\n";
-    file << "# KEY_R=BTN_TR\n";
-    file << "# KEY_TAB=BTN_SELECT\n";
-    file << "# KEY_ENTER=BTN_START\n";
-    file << "# KEY_LEFTSHIFT=BTN_THUMBL\n";
-    file << "# KEY_LEFTCTRL=BTN_THUMBR\n";
-    file << "# KEY_ESC=BTN_MODE\n";
+    file << "# Logitech G29 Racing Wheel - Optimized for Assetto Corsa\n";
+    file << "# Format: EMULATED_BUTTON=KEYBOARD_KEY\n";
+    file << "# All 25 buttons mapped for maximum functionality\n\n";
+    
+    file << "# === ESSENTIAL DRIVING CONTROLS ===\n";
+    file << "BTN_TRIGGER=KEY_Q          # Shift Down (paddle/sequential)\n";
+    file << "BTN_THUMB=KEY_E            # Shift Up (paddle/sequential)\n";
+    file << "BTN_THUMB2=KEY_SPACE       # Handbrake / E-Brake\n";
+    file << "BTN_TOP=KEY_A              # Look Left\n";
+    file << "BTN_TOP2=KEY_D             # Look Right\n";
+    file << "BTN_PINKIE=KEY_F           # Flash Lights / High Beams (quick toggle)\n";
+    file << "BTN_BASE=KEY_R             # Toggle Headlights\n";
+    file << "BTN_BASE2=KEY_G            # Horn\n\n";
+    
+    file << "# === CAMERA & VIEW ===\n";
+    file << "BTN_BASE3=KEY_C            # Change Camera View\n";
+    file << "BTN_BASE4=KEY_V            # Change HUD / Dashboard View\n";
+    file << "BTN_BASE5=KEY_ENTER        # Confirm / Select (menu navigation)\n";
+    file << "BTN_BASE6=KEY_ESC          # Pause / Back / Cancel\n\n";
+    
+    file << "# === PIT & RACE CONTROLS ===\n";
+    file << "BTN_DEAD=KEY_F1            # Pit Limiter\n";
+    file << "BTN_TRIGGER_HAPPY1=KEY_F2  # Request Pit Stop / Enter Pits\n";
+    file << "BTN_TRIGGER_HAPPY2=KEY_T   # Cycle Tire Display / Telemetry\n";
+    file << "BTN_TRIGGER_HAPPY3=KEY_TAB # Leaderboard / Standings\n\n";
+    
+    file << "# === ASSISTS & SETUP ===\n";
+    file << "BTN_TRIGGER_HAPPY4=KEY_F5  # TC (Traction Control) Decrease\n";
+    file << "BTN_TRIGGER_HAPPY5=KEY_F6  # TC Increase\n";
+    file << "BTN_TRIGGER_HAPPY6=KEY_F7  # ABS Decrease\n";
+    file << "BTN_TRIGGER_HAPPY7=KEY_F8  # ABS Increase\n\n";
+    
+    file << "# === UTILITY FUNCTIONS ===\n";
+    file << "BTN_TRIGGER_HAPPY8=KEY_I   # Ignition / Engine Start\n";
+    file << "BTN_TRIGGER_HAPPY9=KEY_F9  # Screenshot\n";
+    file << "BTN_TRIGGER_HAPPY10=KEY_F12 # Save Replay\n";
+    file << "BTN_TRIGGER_HAPPY11=KEY_F10 # Reset Car to Track (far from common keys)\n\n";
+    
+    file << "# === RESERVED / UNASSIGNED ===\n";
+    file << "# BTN_TRIGGER_HAPPY12=      # (Reserved for future use)\n\n";
+    
+    file << "# === AXES (Read-only, automatically handled) ===\n";
+    file << "# ABS_X: Steering wheel (-32768 to 32767, mouse horizontal)\n";
+    file << "# ABS_Y: Unused (always 0)\n";
+    file << "# ABS_Z: Brake pedal (0 to 255, KEY_S hold percentage)\n";
+    file << "# ABS_RZ: Throttle pedal (0 to 255, KEY_W hold percentage)\n";
+    file << "# ABS_HAT0X: D-Pad horizontal (-1, 0, 1) - Menu navigation LEFT/RIGHT\n";
+    file << "# ABS_HAT0Y: D-Pad vertical (-1, 0, 1) - Menu navigation UP/DOWN\n";
 }
 
 bool Config::UpdateDevices(const std::string& kbd_path, const std::string& mouse_path) {
