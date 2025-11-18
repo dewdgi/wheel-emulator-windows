@@ -30,7 +30,7 @@ private:
     int fd;
     
     // State
-    int16_t steering;
+    float steering;  // Keep as float to avoid truncation, convert to int16_t when sending
     float throttle;
     float brake;
     std::map<std::string, bool> buttons;

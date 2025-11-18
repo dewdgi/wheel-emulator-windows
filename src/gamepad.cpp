@@ -131,13 +131,11 @@ void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
     // Linear steering: sensitivity is a direct multiplier (1-100%)
     // At 5% sensitivity: delta * 0.05, at 100%: delta * 1.0
     float delta_steering = delta * (sensitivity / 100.0f);
-    int32_t new_steering = steering + static_cast<int32_t>(delta_steering);
+    steering += delta_steering;
     
     // Clamp to int16_t range
-    if (new_steering < -32768) new_steering = -32768;
-    if (new_steering > 32767) new_steering = 32767;
-    
-    steering = static_cast<int16_t>(new_steering);
+    if (steering < -32768.0f) steering = -32768.0f;
+    if (steering > 32767.0f) steering = 32767.0f;
     
     // Debug: print final steering value when it changes
     if (delta != 0) {
@@ -183,8 +181,8 @@ void GamepadDevice::UpdateDPad(const Input& input) {
 void GamepadDevice::SendState() {
     if (fd < 0) return;
     
-    // Send steering (left stick X)
-    EmitEvent(EV_ABS, ABS_X, steering);
+    // Send steering (left stick X) - convert float to int16_t
+    EmitEvent(EV_ABS, ABS_X, static_cast<int16_t>(steering));
     
     // Send left stick Y (unused, always 0)
     EmitEvent(EV_ABS, ABS_Y, 0);
