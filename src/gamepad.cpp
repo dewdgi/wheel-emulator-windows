@@ -10,6 +10,7 @@
 #include <linux/uhid.h>
 #include <linux/uinput.h>
 #include <linux/input-event-codes.h>
+#include <thread>
 
 GamepadDevice::~GamepadDevice() {
     // Stop FFB thread
@@ -1009,14 +1010,6 @@ void GamepadDevice::FFBUpdateThread() {
         while (slept < total_sleep && ffb_running && running) {
             usleep(step);
             slept += step;
-            std::cout << "[DEBUG][USBGadgetPollingThread] before lock_guard, thread=" << std::this_thread::get_id() << std::endl;
-            {
-                std::lock_guard<std::mutex> lock(state_mutex);
-                std::cout << "[DEBUG][USBGadgetPollingThread] after lock_guard, thread=" << std::this_thread::get_id() << std::endl;
-                report = BuildHIDReport();
-            }
-            std::cout << "[DEBUG][USBGadgetPollingThread] after unlock_guard, thread=" << std::this_thread::get_id() << std::endl;
-            break;
         }
         ++ffb_loop_counter;
     }
