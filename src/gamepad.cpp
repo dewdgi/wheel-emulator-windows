@@ -58,6 +58,27 @@ GamepadDevice::~GamepadDevice() {
         fd = -1;
         std::cout << "[DEBUG][~GamepadDevice] fd closed" << std::endl;
     }
+
+    // List any threads that are still joinable (not shut down)
+    bool any_running = false;
+    std::cout << "[DEBUG][~GamepadDevice] Thread shutdown status:" << std::endl;
+    if (ffb_thread.joinable()) {
+        std::cout << "  - FFB thread: STILL RUNNING" << std::endl;
+        any_running = true;
+    } else {
+        std::cout << "  - FFB thread: exited" << std::endl;
+    }
+    if (gadget_thread.joinable()) {
+        std::cout << "  - Gadget thread: STILL RUNNING" << std::endl;
+        any_running = true;
+    } else {
+        std::cout << "  - Gadget thread: exited" << std::endl;
+    }
+    if (!any_running) {
+        std::cout << "[DEBUG][~GamepadDevice] All threads shut down cleanly." << std::endl;
+    } else {
+        std::cout << "[DEBUG][~GamepadDevice] WARNING: Some threads did not shut down!" << std::endl;
+    }
 }
 #include "gamepad.h"
 #include "input.h"
@@ -1011,20 +1032,29 @@ void GamepadDevice::USBGadgetPollingThread() {
         if (pfd.revents & POLLOUT) {
             std::cout << "[DEBUG][USBGadgetPollingThread] POLLOUT ready, count=" << gadget_loop_counter << std::endl;
             std::vector<uint8_t> report;
-            {
-                std::lock_guard<std::mutex> lock(state_mutex);
-                report = BuildHIDReport();
+            bool got_lock = false;
+            for (int try_count = 0; try_count < 20; ++try_count) { // Try for up to 10ms
+                if (!gadget_running || !running) break;
+                got_lock = state_mutex.try_lock();
+                if (got_lock) break;
+                usleep(500); // 0.5ms
             }
-            std::cout << "[DEBUG][USBGadgetPollingThread] before write, count=" << gadget_loop_counter << std::endl;
-            ssize_t bytes = write(fd, report.data(), report.size());
-            std::cout << "[DEBUG][USBGadgetPollingThread] after write, bytes=" << bytes << ", count=" << gadget_loop_counter << std::endl;
-            if (bytes < 0) {
-                if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                    if (errno == ESHUTDOWN || errno == ECONNRESET) {
-                        std::cout << "USB Gadget device disconnected" << std::endl;
-                        break;
+            if (!got_lock) {
+                std::cout << "[DEBUG][USBGadgetPollingThread] Could not acquire state_mutex, skipping write, gadget_running=" << gadget_running << ", running=" << running << std::endl;
+            } else {
+                report = BuildHIDReport();
+                state_mutex.unlock();
+                std::cout << "[DEBUG][USBGadgetPollingThread] before write, count=" << gadget_loop_counter << std::endl;
+                ssize_t bytes = write(fd, report.data(), report.size());
+                std::cout << "[DEBUG][USBGadgetPollingThread] after write, bytes=" << bytes << ", count=" << gadget_loop_counter << std::endl;
+                if (bytes < 0) {
+                    if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                        if (errno == ESHUTDOWN || errno == ECONNRESET) {
+                            std::cout << "USB Gadget device disconnected" << std::endl;
+                            break;
+                        }
+                        std::cerr << "USB Gadget write error: " << strerror(errno) << std::endl;
                     }
-                    std::cerr << "USB Gadget write error: " << strerror(errno) << std::endl;
                 }
             }
         }
