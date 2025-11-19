@@ -12,6 +12,7 @@ void GamepadDevice::NotifyAllShutdownCVs() {
 #include <iostream>
 #include <dirent.h>
 #include <cstdlib>
+#include <chrono>
 #include <linux/uhid.h>
 #include <linux/uinput.h>
 #include <linux/input-event-codes.h>
@@ -23,6 +24,8 @@ void GamepadDevice::ShutdownThreads() {
     std::cout << "[DEBUG][ShutdownThreads] ffb_running set to false" << std::endl;
     gadget_running = false;
     std::cout << "[DEBUG][ShutdownThreads] gadget_running set to false" << std::endl;
+    state_cv.notify_all();
+    ffb_cv.notify_all();
     // Forcibly close fd to unblock USB Gadget polling thread if needed
     if (fd >= 0) {
         std::cout << "[DEBUG][ShutdownThreads] Forcibly closing fd to unblock gadget thread" << std::endl;
@@ -109,6 +112,8 @@ GamepadDevice::GamepadDevice()
         : fd(-1), use_uhid(false), use_gadget(false), gadget_running(false),
             enabled(false), steering(0), throttle(0.0f), brake(0.0f), clutch(0.0f), dpad_x(0), dpad_y(0),
             ffb_force(0), ffb_autocenter(0), ffb_enabled(true), user_torque(0.0f) {
+    ffb_running = false;
+    state_dirty = false;
     std::cout << "[DEBUG][GamepadDevice::GamepadDevice] Constructor called" << std::endl;
 }
 
@@ -123,26 +128,36 @@ void GamepadDevice::UpdateClutch(bool pressed) {
 }
 // Query enabled state (mutex-protected)
 bool GamepadDevice::IsEnabled() {
-    std::cout << "[DEBUG][IsEnabled] before lock_guard, thread=" << std::this_thread::get_id() << std::endl;
     std::lock_guard<std::mutex> lock(state_mutex);
-    std::cout << "[DEBUG][IsEnabled] after lock_guard, thread=" << std::this_thread::get_id() << std::endl;
     return enabled;
+}
+
+void GamepadDevice::SetEnabled(bool enable, Input& input) {
+    bool changed = false;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        if (enabled != enable) {
+            enabled = enable;
+            changed = true;
+        }
+    }
+    if (!changed) {
+        return;
+    }
+
+    input.Grab(enable);
+    NotifyStateChanged();
+    std::cout << (enable ? "Emulation ENABLED" : "Emulation DISABLED") << std::endl;
 }
 
 // Toggle enabled state atomically (mutex-protected)
 void GamepadDevice::ToggleEnabled(Input& input) {
-    bool now_enabled;
+    bool next_state;
     {
         std::lock_guard<std::mutex> lock(state_mutex);
-        enabled = !enabled;
-        now_enabled = enabled;
+        next_state = !enabled;
     }
-    input.Grab(now_enabled);
-    if (now_enabled) {
-        std::cout << "Emulation ENABLED" << std::endl;
-    } else {
-        std::cout << "Emulation DISABLED" << std::endl;
-    }
+    SetEnabled(next_state, input);
 }
 
 // Logitech G29 HID Report Descriptor
@@ -669,6 +684,7 @@ void GamepadDevice::UpdateButtons(const Input& input) {
 }
 
 void GamepadDevice::NotifyStateChanged() {
+    state_dirty.store(true, std::memory_order_release);
     state_cv.notify_all();
     ffb_cv.notify_all();
 }
@@ -998,34 +1014,23 @@ void GamepadDevice::ProcessUHIDEvents() {
 
 void GamepadDevice::USBGadgetPollingThread() {
     std::cout << "[DEBUG][USBGadgetPollingThread] ENTERED" << std::endl;
-    std::cout << "[DEBUG][USBGadgetPollingThread] gadget_running=" << gadget_running << ", running=" << running << std::endl;
-    // USB Gadget bidirectional communication:
-    // - Write INPUT reports (joystick state) when host polls
-    // - Read OUTPUT reports (FFB commands) when host sends them
-    
-    std::cout << "[DEBUG] USB Gadget polling thread started" << std::endl;
-    
-    // Use non-blocking I/O with poll() for bidirectional communication
-    int flags = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-    
-    // (pfd and ffb_buffer removed: not needed in event-driven version)
-    
-    int gadget_loop_counter = 0;
-    std::unique_lock<std::mutex> lock(state_mutex);
-    while (gadget_running && running) {
-        std::cout << "[DEBUG][USBGadgetPollingThread] waiting for state change or shutdown, gadget_running=" << gadget_running << ", running=" << running << std::endl;
-        state_cv.wait(lock, [&]{ return !gadget_running || !running; });
-        if (!gadget_running || !running) {
-            std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop after state_cv, count=" << gadget_loop_counter << std::endl;
-            break;
+        int flags = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+        std::unique_lock<std::mutex> lock(state_mutex);
+        while (gadget_running && running) {
+            state_cv.wait(lock, [&]{
+                return !gadget_running || !running || state_dirty.load(std::memory_order_acquire);
+            });
+            if (!gadget_running || !running) {
+                break;
+            }
+            state_dirty.store(false, std::memory_order_release);
+            lock.unlock();
+            SendUHIDReport();
+            lock.lock();
         }
-        // After being notified, perform I/O as needed (event-driven)
-        // ...existing POLLIN/POLLOUT logic can be moved here if event-driven...
-        ++gadget_loop_counter;
-    }
-    std::cout << "[DEBUG][USBGadgetPollingThread] thread stopped, running=" << running << ", gadget_running=" << gadget_running << std::endl;
-    std::cout << "[DEBUG][USBGadgetPollingThread] EXITED (end of thread)" << std::endl;
+        std::cout << "[DEBUG][USBGadgetPollingThread] EXITED" << std::endl;
 }
 
 void GamepadDevice::FFBUpdateThread() {
@@ -1037,29 +1042,29 @@ void GamepadDevice::FFBUpdateThread() {
     std::cout << "[DEBUG][FFBUpdateThread] ENTERED" << std::endl;
     std::cout << "[DEBUG][FFBUpdateThread] thread id: " << std::this_thread::get_id() << std::endl;
     std::cout << "[DEBUG][FFBUpdateThread] ffb_running=" << ffb_running << ", running=" << running << std::endl;
-    std::cout << "[DEBUG] FFB update thread started" << std::endl;
     
     float velocity = 0.0f;  // Current wheel rotation speed
-    int ffb_loop_counter = 0;
+    using clock = std::chrono::steady_clock;
+    auto last = clock::now();
     std::unique_lock<std::mutex> lock(state_mutex);
     while (ffb_running && running) {
-        std::cout << "[DEBUG][FFBUpdateThread] waiting for state change or shutdown, ffb_running=" << ffb_running << ", running=" << running << std::endl;
-        ffb_cv.wait(lock, [&]{ return !ffb_running || !running; });
+        ffb_cv.wait_for(lock, std::chrono::milliseconds(1));
         if (!ffb_running || !running) {
-            std::cout << "[DEBUG][FFBUpdateThread] breaking loop after ffb_cv, count=" << ffb_loop_counter << std::endl;
             break;
         }
-        // Physics update (single step)
-        float total_torque = 0.0f;
-        total_torque += static_cast<float>(ffb_force);
-        total_torque += user_torque;
+        auto now = clock::now();
+        float dt = std::chrono::duration<float>(now - last).count();
+        last = now;
+        float total_torque = static_cast<float>(ffb_force) + user_torque;
         if (ffb_autocenter > 0) {
             float spring = -(steering * static_cast<float>(ffb_autocenter)) / 32768.0f;
             total_torque += spring;
         }
-        velocity += total_torque * 0.001f;
+
+        velocity += total_torque * dt;
         velocity *= 0.98f;
         steering += velocity;
+
         if (steering < -32768.0f) {
             steering = -32768.0f;
             velocity = 0.0f;
@@ -1068,10 +1073,13 @@ void GamepadDevice::FFBUpdateThread() {
             steering = 32767.0f;
             velocity = 0.0f;
         }
-        ++ffb_loop_counter;
+
+        state_dirty.store(true, std::memory_order_release);
+        lock.unlock();
+        state_cv.notify_all();
+        lock.lock();
     }
-    std::cout << "[DEBUG][FFBUpdateThread] FFB update thread stopped, running=" << running << ", ffb_running=" << ffb_running << std::endl;
-    std::cout << "[DEBUG][FFBUpdateThread] EXITED" << std::endl;
+    std::cout << "[DEBUG][FFBUpdateThread] FFB update thread stopped" << std::endl;
 }
 
 void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {

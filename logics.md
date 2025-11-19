@@ -16,8 +16,9 @@
     - Loads config
     - Creates `GamepadDevice` (tries USB Gadget, then UHID, then uinput)
     - Discovers keyboard and mouse via `Input`
-    - **Main loop:**
+    - **Main loop (event-driven):**
       - While `running`:
+        - `poll()` waits on keyboard/mouse fds (no sleeps)
         - `input.Read(mouse_dx)` — non-blocking, updates key/mouse state
         - `input.CheckToggle()` — edge-detects Ctrl+M, toggles enabled state
         - If enabled:
@@ -29,7 +30,6 @@
           - `gamepad.UpdateDPad(input)`
           - `gamepad.SendState()`
         - `gamepad.ProcessUHIDEvents()`
-        - `usleep(10000)`
     - On exit: `input.Grab(false)`
 
 ### src/gamepad.h / src/gamepad.cpp

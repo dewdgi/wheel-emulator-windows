@@ -71,6 +71,7 @@ private:
     std::atomic<bool> gadget_running;
     std::thread ffb_thread;
     std::atomic<bool> ffb_running;
+    std::atomic<bool> state_dirty;
     std::mutex state_mutex;  // Protects state when thread is active
     std::condition_variable state_cv; // Notifies polling thread of state changes or shutdown
     std::condition_variable ffb_cv;   // Notifies FFB thread of state changes or shutdown

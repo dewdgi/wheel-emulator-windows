@@ -9,6 +9,7 @@ void notify_all_shutdown(Input& input, GamepadDevice& gamepad);
 #include <signal.h>
 #include <unistd.h>
 #include <cstring>
+#include <cerrno>
 #include <vector>
 #include <fcntl.h>
 #include <dirent.h>
@@ -86,47 +87,52 @@ int main(int, char*[]) {
     bool mouse_ok = input.DiscoverMouse(config.mouse_device);
     std::cout << "[DEBUG][main] input.DiscoverMouse returned " << mouse_ok << std::endl;
 
-    // Start input event thread
-    std::thread input_thread([&input]() {
-        while (running) {
-            // Use poll() with timeout to block until input or shutdown
-            struct pollfd pfds[2];
-            int nfds = 0;
-            if (input.get_kbd_fd() >= 0) {
-                pfds[nfds].fd = input.get_kbd_fd();
-                pfds[nfds].events = POLLIN;
-                nfds++;
-            }
-            if (input.get_mouse_fd() >= 0) {
-                pfds[nfds].fd = input.get_mouse_fd();
-                pfds[nfds].events = POLLIN;
-                nfds++;
-            }
-            int pret = 0;
-            if (nfds > 0) {
-                pret = poll(pfds, nfds, 50); // 50ms timeout
-            } else {
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            }
-            if (!running) break;
-            if (pret > 0) {
-                int dummy = 0;
-                input.Read(dummy);
-                input.NotifyInputChanged();
-            }
-        }
-    });
+    if (input.get_kbd_fd() < 0 && input.get_mouse_fd() < 0) {
+        std::cerr << "No input devices available, exiting." << std::endl;
+        return 1;
+    }
 
-    std::unique_lock<std::mutex> lock(input.input_mutex);
-    bool printed_main_loop = false;
     while (running) {
-        input.input_cv.wait_for(lock, std::chrono::milliseconds(100));
-        if (!running) break;
-        if (!printed_main_loop) {
-            std::cout << "[DEBUG][main] Loop running, running=" << running.load() << std::endl;
-            printed_main_loop = true;
+        struct pollfd pfds[2];
+        int nfds = 0;
+        if (input.get_kbd_fd() >= 0) {
+            pfds[nfds].fd = input.get_kbd_fd();
+            pfds[nfds].events = POLLIN;
+            nfds++;
         }
-        // ...main loop logic (react to input changes)...
+        if (input.get_mouse_fd() >= 0) {
+            pfds[nfds].fd = input.get_mouse_fd();
+            pfds[nfds].events = POLLIN;
+            nfds++;
+        }
+
+        int pret = poll(pfds, nfds, -1);
+        if (pret < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            std::cerr << "[main] poll() error: " << strerror(errno) << std::endl;
+            break;
+        }
+
+        int mouse_dx = 0;
+        input.Read(mouse_dx);
+
+        if (input.CheckToggle()) {
+            gamepad.ToggleEnabled(input);
+        }
+
+        if (gamepad.IsEnabled()) {
+            gamepad.UpdateSteering(mouse_dx, config.sensitivity);
+            gamepad.UpdateThrottle(input.IsKeyPressed(KEY_W));
+            gamepad.UpdateBrake(input.IsKeyPressed(KEY_S));
+            gamepad.UpdateClutch(input.IsKeyPressed(KEY_A));
+            gamepad.UpdateButtons(input);
+            gamepad.UpdateDPad(input);
+            gamepad.SendState();
+        }
+
+        gamepad.ProcessUHIDEvents();
     }
     // On shutdown, notify all threads to wake up and exit
     notify_all_shutdown(input, gamepad);
@@ -134,7 +140,6 @@ int main(int, char*[]) {
     // Signal threads to exit before destruction
     std::cout << "[DEBUG][main] Calling gamepad.ShutdownThreads()" << std::endl;
     gamepad.ShutdownThreads();
-    if (input_thread.joinable()) input_thread.join();
     std::cout << "[DEBUG][main] Called input.Grab(false)" << std::endl;
     input.Grab(false);
     std::cout << "[DEBUG][main] Goodbye!" << std::endl;
