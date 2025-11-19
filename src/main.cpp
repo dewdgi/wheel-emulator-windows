@@ -269,25 +269,29 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     std::cout << std::endl;
-    
+
+    std::cout << "Using configured keyboard: " << config.keyboard_device << std::endl;
+    std::cout << "Using configured mouse: " << config.mouse_device << std::endl;
     std::cout << std::endl;
+
     std::cout << "Emulation is OFF. Press Ctrl+M to enable." << std::endl;
     std::cout << std::endl;
 
     // Main loop
+    int debug_iter = 0;
     while (running) {
         int mouse_dx = 0;
-
-        // Read input events
         input.Read(mouse_dx);
-
-        // Check for toggle (Ctrl+M)
-        if (input.CheckToggle()) {
+        bool toggle = input.CheckToggle();
+        bool enabled = gamepad.IsEnabled();
+        if (debug_iter++ % 20 == 0) {
+            std::cout << "[DEBUG] running=" << running << ", toggle=" << toggle << ", enabled=" << enabled << std::endl;
+        }
+        if (toggle) {
+            std::cout << "[DEBUG] Toggle detected!" << std::endl;
             gamepad.ToggleEnabled(input);
         }
-
-        if (gamepad.IsEnabled()) {
-            // Update gamepad state
+        if (enabled) {
             gamepad.UpdateSteering(mouse_dx, config.sensitivity);
             gamepad.UpdateThrottle(input.IsKeyPressed(KEY_W));
             gamepad.UpdateBrake(input.IsKeyPressed(KEY_S));
@@ -296,19 +300,11 @@ int main(int argc, char* argv[]) {
             gamepad.UpdateDPad(input);
             gamepad.SendState();
         }
-        // Don't send any reports when disabled - let device stay at last state
-
-        // Process UHID events (for FFB and kernel requests)
         gamepad.ProcessUHIDEvents();
-
-        // Sleep for 8ms (125 Hz update rate, matching real racing wheels)
         usleep(8000);
     }
-    
-    // Cleanup
-    std::cout << "Cleaning up..." << std::endl;
+    std::cout << "[DEBUG] Main loop exited, running=" << running << std::endl;
     input.Grab(false);
-    
     std::cout << "Goodbye!" << std::endl;
     return 0;
 }

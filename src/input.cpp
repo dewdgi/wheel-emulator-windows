@@ -1,4 +1,9 @@
+// Improved toggle: allow either Ctrl key, and tolerate quick presses
 #include "input.h"
+#include <iostream>
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/ioctl.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <cstring>
@@ -247,19 +252,16 @@ void Input::Read(int& mouse_dx) {
             if (n > 0) {
                 if (ev.type == EV_KEY && ev.code < KEY_MAX) {
                     keys[ev.code] = (ev.value != 0);
+                    std::cout << "[DEBUG] Key event: code=" << ev.code << ", value=" << ev.value << std::endl;
                 }
             } else if (n == 0) {
-                // End of file (should not happen for input devices)
                 break;
             } else {
                 if (errno == EINTR) {
-                    // Interrupted by signal, retry
                     continue;
                 } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    // No more data to read (non-blocking)
                     break;
                 } else {
-                    // Other error
                     break;
                 }
             }
@@ -273,19 +275,16 @@ void Input::Read(int& mouse_dx) {
             if (n > 0) {
                 if (ev.type == EV_REL && ev.code == REL_X) {
                     mouse_dx += ev.value;
+                    std::cout << "[DEBUG] Mouse event: dx=" << ev.value << std::endl;
                 }
             } else if (n == 0) {
-                // End of file (should not happen for input devices)
                 break;
             } else {
                 if (errno == EINTR) {
-                    // Interrupted by signal, retry
                     continue;
                 } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    // No more data to read (non-blocking)
                     break;
                 } else {
-                    // Other error
                     break;
                 }
             }
@@ -293,7 +292,8 @@ void Input::Read(int& mouse_dx) {
     }
 }
 
-// Improved toggle: allow either Ctrl key, and tolerate quick presses
+// --- Place these at the end of the file ---
+
 bool Input::CheckToggle() {
     bool ctrl = keys[KEY_LEFTCTRL] || keys[KEY_RIGHTCTRL];
     bool m = keys[KEY_M];
@@ -308,7 +308,6 @@ bool Input::CheckToggle() {
 
 void Input::Grab(bool enable) {
     int grab = enable ? 1 : 0;
-    
     if (kbd_fd >= 0 && fcntl(kbd_fd, F_GETFD) != -1) {
         if (ioctl(kbd_fd, EVIOCGRAB, grab) < 0) {
             std::cerr << "Failed to " << (enable ? "grab" : "ungrab") << " keyboard (fd=" << kbd_fd << ") errno=" << errno << std::endl;
@@ -329,7 +328,6 @@ void Input::Grab(bool enable) {
         std::cerr << "Cannot grab mouse: invalid or closed file descriptor." << std::endl;
     }
 }
-
 bool Input::IsKeyPressed(int keycode) const {
     if (keycode >= 0 && keycode < KEY_MAX) {
         return keys[keycode];
