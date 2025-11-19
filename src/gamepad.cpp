@@ -566,7 +566,7 @@ void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
             delta = 0;
         }
         if (delta != 0) {
-            const float gain = static_cast<float>(sensitivity) * 35.0f;
+            const float gain = static_cast<float>(sensitivity) * 70.0f;
             user_torque += delta * gain;
             const float max_impulse = 20000.0f;
             if (user_torque > max_impulse) user_torque = max_impulse;
@@ -1113,13 +1113,6 @@ void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
     
     uint8_t cmd = data[0];
     
-    // Debug: Print FFB commands
-    std::cout << "FFB: " << std::hex;
-    for (size_t i = 0; i < size; i++) {
-        std::cout << (int)data[i] << " ";
-    }
-    std::cout << std::dec << std::endl;
-    
     // Logitech G29 FFB protocol (based on hid-lg4ff.c kernel driver)
     switch (cmd) {
         case 0x11:  // Constant force effect (slot 1)
@@ -1128,21 +1121,18 @@ void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
             // data[3] = direction? (0x80 = center)
             {
                 // Convert 0x00-0xFF range to -128..127 force value
-                // DO NOT SCALE - apply force exactly as game sends it
                 int8_t force = static_cast<int8_t>(data[2]) - 0x80;
-                ffb_force = force * 256;  // Convert to int16_t range
-                std::cout << "FFB Constant Force: " << (int)ffb_force << std::endl;
+                // Invert direction (Logitech positive pushes toward center) and reduce strength
+                ffb_force = static_cast<int16_t>(-force) * 96;
             }
             break;
             
         case 0x13:  // Stop effect / de-activate force
             ffb_force = 0;
-            std::cout << "FFB Stop" << std::endl;
             break;
             
         case 0xf5:  // Disable autocenter
             ffb_autocenter = 0;
-            std::cout << "FFB Autocenter OFF" << std::endl;
             break;
             
         case 0xfe:  // Set autocenter parameters
@@ -1150,16 +1140,14 @@ void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
             // data[2], data[3] = autocenter strength
             // data[4] = spring rate
             if (data[1] == 0x0d) {
-                ffb_autocenter = static_cast<int16_t>(data[2]) * 128;  // Scale to usable range
-                std::cout << "FFB Autocenter Params: " << ffb_autocenter << std::endl;
+                ffb_autocenter = static_cast<int16_t>(data[2]) * 32;  // Softer spring
             }
             break;
             
         case 0x14:  // Activate autocenter
             if (ffb_autocenter == 0) {
-                ffb_autocenter = 4096;  // Default moderate autocenter
+                ffb_autocenter = 2048;  // Default gentle autocenter
             }
-            std::cout << "FFB Autocenter ON: " << ffb_autocenter << std::endl;
             break;
             
         case 0xf8:  // Extended commands (range, mode switching, LEDs, etc.)
