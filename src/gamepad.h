@@ -8,13 +8,13 @@
 extern std::atomic<bool> running;
 
 #include <cstdint>
-#include <iostream>
 #include <map>
 #include <string>
 #include <vector>
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <array>
 
 class Input; // Forward declaration
 
@@ -28,10 +28,10 @@ public:
     GamepadDevice();
     ~GamepadDevice();
     // Prevent copy and move
-    GamepadDevice(const GamepadDevice& /*other*/) { std::cout << "[DEBUG][GamepadDevice] COPY CONSTRUCTOR CALLED" << std::endl; }
-    GamepadDevice& operator=(const GamepadDevice& /*other*/) { std::cout << "[DEBUG][GamepadDevice] COPY ASSIGNMENT CALLED" << std::endl; return *this; }
-    GamepadDevice(GamepadDevice&& /*other*/) noexcept { std::cout << "[DEBUG][GamepadDevice] MOVE CONSTRUCTOR CALLED" << std::endl; }
-    GamepadDevice& operator=(GamepadDevice&& /*other*/) noexcept { std::cout << "[DEBUG][GamepadDevice] MOVE ASSIGNMENT CALLED" << std::endl; return *this; }
+    GamepadDevice(const GamepadDevice&) = delete;
+    GamepadDevice& operator=(const GamepadDevice&) = delete;
+    GamepadDevice(GamepadDevice&&) noexcept = delete;
+    GamepadDevice& operator=(GamepadDevice&&) noexcept = delete;
 
     bool IsFFBThreadJoinable() const { return ffb_thread.joinable(); }
 private:
@@ -43,11 +43,11 @@ private:
             bool Create();
     // Update gamepad state
     void UpdateSteering(int delta, int sensitivity);
-    void UpdateThrottle(bool pressed);
-    void UpdateBrake(bool pressed);
+    void UpdateThrottle(bool pressed, float dt);
+    void UpdateBrake(bool pressed, float dt);
     void UpdateButtons(const Input& input);
     void UpdateDPad(const Input& input);
-    void UpdateClutch(bool pressed);
+    void UpdateClutch(bool pressed, float dt);
 
     // Send state to virtual device
     void SendState();
@@ -92,7 +92,9 @@ private:
     int16_t ffb_force;           // Current FFB force from game (-32768 to 32767)
     int16_t ffb_autocenter;      // Autocenter spring strength
     bool ffb_enabled;
-    float user_torque;           // User input torque (from mouse)
+    float user_torque;           // User impulse from mouse (consumed by FFB thread)
+    std::array<uint8_t, 7> gadget_output_pending{}; // Incomplete OUTPUT report bytes
+    size_t gadget_output_pending_len = 0;
 
     // UHID methods
     bool CreateUHID();
@@ -101,6 +103,7 @@ private:
     void SendUHIDReport();
     std::vector<uint8_t> BuildHIDReport();
     void USBGadgetPollingThread();  // Thread that responds to host polls
+    void ReadGadgetOutput();        // Gather host OUTPUT data (FFB) in gadget mode
     void ParseFFBCommand(const uint8_t* data, size_t size);  // Parse FFB OUTPUT reports
     void FFBUpdateThread();  // Thread that continuously applies FFB forces
 

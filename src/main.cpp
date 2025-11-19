@@ -76,22 +76,18 @@ int main(int, char*[]) {
         std::cerr << "Failed to create virtual gamepad" << std::endl;
         return 1;
     }
-    std::cout << "[DEBUG][main] After gamepad.Create(), ffb_thread joinable=" << gamepad.IsFFBThreadJoinable() << std::endl;
 
     // Discover input devices
     Input input;
-    std::cout << "[DEBUG][main] Calling input.DiscoverKeyboard with '" << config.keyboard_device << "'" << std::endl;
-    bool kbd_ok = input.DiscoverKeyboard(config.keyboard_device);
-    std::cout << "[DEBUG][main] input.DiscoverKeyboard returned " << kbd_ok << std::endl;
-    std::cout << "[DEBUG][main] Calling input.DiscoverMouse with '" << config.mouse_device << "'" << std::endl;
-    bool mouse_ok = input.DiscoverMouse(config.mouse_device);
-    std::cout << "[DEBUG][main] input.DiscoverMouse returned " << mouse_ok << std::endl;
+    input.DiscoverKeyboard(config.keyboard_device);
+    input.DiscoverMouse(config.mouse_device);
 
     if (input.get_kbd_fd() < 0 && input.get_mouse_fd() < 0) {
         std::cerr << "No input devices available, exiting." << std::endl;
         return 1;
     }
 
+    auto last_tick = std::chrono::steady_clock::now();
     while (running) {
         struct pollfd pfds[2];
         int nfds = 0;
@@ -118,15 +114,25 @@ int main(int, char*[]) {
         int mouse_dx = 0;
         input.Read(mouse_dx);
 
+        auto now = std::chrono::steady_clock::now();
+        float dt = std::chrono::duration<float>(now - last_tick).count();
+        last_tick = now;
+        if (dt < 0.0f) {
+            dt = 0.0f;
+        }
+        if (dt > 0.05f) {
+            dt = 0.05f;
+        }
+
         if (input.CheckToggle()) {
             gamepad.ToggleEnabled(input);
         }
 
         if (gamepad.IsEnabled()) {
             gamepad.UpdateSteering(mouse_dx, config.sensitivity);
-            gamepad.UpdateThrottle(input.IsKeyPressed(KEY_W));
-            gamepad.UpdateBrake(input.IsKeyPressed(KEY_S));
-            gamepad.UpdateClutch(input.IsKeyPressed(KEY_A));
+            gamepad.UpdateThrottle(input.IsKeyPressed(KEY_W), dt);
+            gamepad.UpdateBrake(input.IsKeyPressed(KEY_S), dt);
+            gamepad.UpdateClutch(input.IsKeyPressed(KEY_A), dt);
             gamepad.UpdateButtons(input);
             gamepad.UpdateDPad(input);
             gamepad.SendState();
@@ -136,13 +142,9 @@ int main(int, char*[]) {
     }
     // On shutdown, notify all threads to wake up and exit
     notify_all_shutdown(input, gamepad);
-    std::cout << "[DEBUG][main] Main loop exited, running=" << running << std::endl;
     // Signal threads to exit before destruction
-    std::cout << "[DEBUG][main] Calling gamepad.ShutdownThreads()" << std::endl;
     gamepad.ShutdownThreads();
-    std::cout << "[DEBUG][main] Called input.Grab(false)" << std::endl;
     input.Grab(false);
-    std::cout << "[DEBUG][main] Goodbye!" << std::endl;
     return 0;
 
 }

@@ -13,22 +13,20 @@ void GamepadDevice::NotifyAllShutdownCVs() {
 #include <dirent.h>
 #include <cstdlib>
 #include <chrono>
+#include <cmath>
+#include <cerrno>
 #include <linux/uhid.h>
 #include <linux/uinput.h>
 #include <linux/input-event-codes.h>
 #include <thread>
 
 void GamepadDevice::ShutdownThreads() {
-    std::cout << "[DEBUG][ShutdownThreads] Called, setting ffb_running and gadget_running to false" << std::endl;
     ffb_running = false;
-    std::cout << "[DEBUG][ShutdownThreads] ffb_running set to false" << std::endl;
     gadget_running = false;
-    std::cout << "[DEBUG][ShutdownThreads] gadget_running set to false" << std::endl;
     state_cv.notify_all();
     ffb_cv.notify_all();
     // Forcibly close fd to unblock USB Gadget polling thread if needed
     if (fd >= 0) {
-        std::cout << "[DEBUG][ShutdownThreads] Forcibly closing fd to unblock gadget thread" << std::endl;
         close(fd);
         fd = -1;
     }
@@ -48,50 +46,19 @@ void GamepadDevice::ShutdownThreads() {
 #include <thread>
 
 GamepadDevice::~GamepadDevice() {
-    std::cout << "[DEBUG][~GamepadDevice] Destructor called" << std::endl;
-    // Stop FFB thread
     ffb_running = false;
-    std::cout << "[DEBUG][~GamepadDevice] ffb_running set to false" << std::endl;
     if (ffb_thread.joinable()) {
-        std::cout << "[DEBUG][~GamepadDevice] Joining ffb_thread" << std::endl;
         ffb_thread.join();
-        std::cout << "[DEBUG][~GamepadDevice] ffb_thread joined" << std::endl;
-    }
-    // Stop USB Gadget polling thread
-    gadget_running = false;
-    std::cout << "[DEBUG][~GamepadDevice] gadget_running set to false" << std::endl;
-    if (gadget_thread.joinable()) {
-        std::cout << "[DEBUG][~GamepadDevice] Joining gadget_thread" << std::endl;
-        gadget_thread.join();
-        std::cout << "[DEBUG][~GamepadDevice] gadget_thread joined" << std::endl;
-    }
-    // Close device file descriptor
-    if (fd >= 0) {
-        std::cout << "[DEBUG][~GamepadDevice] Closing fd" << std::endl;
-        close(fd);
-        fd = -1;
-        std::cout << "[DEBUG][~GamepadDevice] fd closed" << std::endl;
     }
 
-    // List any threads that are still joinable (not shut down)
-    bool any_running = false;
-    std::cout << "[DEBUG][~GamepadDevice] Thread shutdown status:" << std::endl;
-    if (ffb_thread.joinable()) {
-        std::cout << "  - FFB thread: STILL RUNNING" << std::endl;
-        any_running = true;
-    } else {
-        std::cout << "  - FFB thread: exited" << std::endl;
-    }
+    gadget_running = false;
     if (gadget_thread.joinable()) {
-        std::cout << "  - Gadget thread: STILL RUNNING" << std::endl;
-        any_running = true;
-    } else {
-        std::cout << "  - Gadget thread: exited" << std::endl;
+        gadget_thread.join();
     }
-    if (!any_running) {
-        std::cout << "[DEBUG][~GamepadDevice] All threads shut down cleanly." << std::endl;
-    } else {
-        std::cout << "[DEBUG][~GamepadDevice] WARNING: Some threads did not shut down!" << std::endl;
+
+    if (fd >= 0) {
+        close(fd);
+        fd = -1;
     }
 }
 #include "gamepad.h"
@@ -111,19 +78,30 @@ GamepadDevice::~GamepadDevice() {
 GamepadDevice::GamepadDevice() 
         : fd(-1), use_uhid(false), use_gadget(false), gadget_running(false),
             enabled(false), steering(0), throttle(0.0f), brake(0.0f), clutch(0.0f), dpad_x(0), dpad_y(0),
-            ffb_force(0), ffb_autocenter(0), ffb_enabled(true), user_torque(0.0f) {
+            ffb_force(0), ffb_autocenter(0), ffb_enabled(true), user_torque(0.0f),
+            gadget_output_pending_len(0) {
     ffb_running = false;
     state_dirty = false;
-    std::cout << "[DEBUG][GamepadDevice::GamepadDevice] Constructor called" << std::endl;
 }
 
 // Clutch axis update (ramp like throttle/brake)
-void GamepadDevice::UpdateClutch(bool pressed) {
-    std::lock_guard<std::mutex> lock(state_mutex);
-    if (pressed) {
-        clutch = (clutch + 3.0f > 100.0f) ? 100.0f : clutch + 3.0f;
-    } else {
-        clutch = (clutch - 3.0f < 0.0f) ? 0.0f : clutch - 3.0f;
+void GamepadDevice::UpdateClutch(bool pressed, float dt) {
+    bool changed = false;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        const float rate = 150.0f;
+        float delta = rate * dt;
+        if (delta > 5.0f) delta = 5.0f;
+        float next = clutch + (pressed ? delta : -delta);
+        if (next < 0.0f) next = 0.0f;
+        if (next > 100.0f) next = 100.0f;
+        if (std::fabs(next - clutch) > 0.001f) {
+            clutch = next;
+            changed = true;
+        }
+    }
+    if (changed) {
+        NotifyStateChanged();
     }
 }
 // Query enabled state (mutex-protected)
@@ -285,15 +263,11 @@ bool GamepadDevice::Create() {
     // Try USB Gadget first (proper USB device with full driver support)
     std::cout << "Attempting to create device using USB Gadget (real USB device)..." << std::endl;
     if (CreateUSBGadget()) {
-        std::cout << "[DEBUG][GamepadDevice::Create] USBGadget created, starting threads" << std::endl;
         if (!gadget_thread.joinable()) {
             gadget_thread = std::thread(&GamepadDevice::USBGadgetPollingThread, this);
-            std::cout << "[DEBUG][GamepadDevice::Create] gadget_thread started, id=" << gadget_thread.get_id() << std::endl;
         }
         if (!ffb_thread.joinable()) {
-            std::cout << "[DEBUG][GamepadDevice::Create] About to start ffb_thread" << std::endl;
             ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
-            std::cout << "[DEBUG][GamepadDevice::Create] ffb_thread started, id=" << ffb_thread.get_id() << ", joinable=" << ffb_thread.joinable() << std::endl;
         }
         return true;
     }
@@ -301,15 +275,11 @@ bool GamepadDevice::Create() {
     // Try UHID second (provides HIDRAW support)
     std::cout << "USB Gadget not available, trying UHID..." << std::endl;
     if (CreateUHID()) {
-        std::cout << "[DEBUG][GamepadDevice::Create] UHID created, starting threads" << std::endl;
         if (!gadget_thread.joinable()) {
             gadget_thread = std::thread(&GamepadDevice::USBGadgetPollingThread, this);
-            std::cout << "[DEBUG][GamepadDevice::Create] gadget_thread started, id=" << gadget_thread.get_id() << std::endl;
         }
         if (!ffb_thread.joinable()) {
-            std::cout << "[DEBUG][GamepadDevice::Create] About to start ffb_thread (UHID)" << std::endl;
             ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
-            std::cout << "[DEBUG][GamepadDevice::Create] ffb_thread started (UHID), id=" << ffb_thread.get_id() << ", joinable=" << ffb_thread.joinable() << std::endl;
         }
         return true;
     }
@@ -318,15 +288,11 @@ bool GamepadDevice::Create() {
     std::cout << "UHID failed, falling back to uinput..." << std::endl;
     std::cout << "Note: uinput doesn't provide HIDRAW, some games may not detect the wheel" << std::endl;
     bool uinput_ok = CreateUInput();
-    std::cout << "[DEBUG][GamepadDevice::Create] UInput created: " << uinput_ok << ", starting threads" << std::endl;
     if (!gadget_thread.joinable()) {
         gadget_thread = std::thread(&GamepadDevice::USBGadgetPollingThread, this);
-        std::cout << "[DEBUG][GamepadDevice::Create] gadget_thread started, id=" << gadget_thread.get_id() << std::endl;
     }
     if (!ffb_thread.joinable()) {
-        std::cout << "[DEBUG][GamepadDevice::Create] About to start ffb_thread (UInput)" << std::endl;
         ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
-        std::cout << "[DEBUG][GamepadDevice::Create] ffb_thread started (UInput), id=" << ffb_thread.get_id() << ", joinable=" << ffb_thread.joinable() << std::endl;
     }
     return uinput_ok;
 }
@@ -609,41 +575,67 @@ bool GamepadDevice::CreateUInput() {
 }
 
 void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
+    if (delta == 0) {
+        return;
+    }
+    bool notify = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex);
-        // Apply small deadzone to filter out mouse jitter
         if (delta > -2 && delta < 2) {
             delta = 0;
         }
-        // Mouse input sets user torque - scaled to match FFB force range
-        // Reduced from 200x to 20x so mouse doesn't overpower FFB
-        user_torque = delta * static_cast<float>(sensitivity) * 20.0f;
-    }
-    NotifyStateChanged();
-}
-
-void GamepadDevice::UpdateThrottle(bool pressed) {
-    {
-        std::lock_guard<std::mutex> lock(state_mutex);
-        if (pressed) {
-            throttle = (throttle + 3.0f > 100.0f) ? 100.0f : throttle + 3.0f;
-        } else {
-            throttle = (throttle - 3.0f < 0.0f) ? 0.0f : throttle - 3.0f;
+        if (delta != 0) {
+            const float gain = static_cast<float>(sensitivity) * 40.0f;
+            user_torque += delta * gain;
+            const float max_impulse = 20000.0f;
+            if (user_torque > max_impulse) user_torque = max_impulse;
+            if (user_torque < -max_impulse) user_torque = -max_impulse;
+            notify = true;
         }
     }
-    NotifyStateChanged();
+    if (notify) {
+        NotifyStateChanged();
+    }
 }
 
-void GamepadDevice::UpdateBrake(bool pressed) {
+void GamepadDevice::UpdateThrottle(bool pressed, float dt) {
+    bool changed = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex);
-        if (pressed) {
-            brake = (brake + 3.0f > 100.0f) ? 100.0f : brake + 3.0f;
-        } else {
-            brake = (brake - 3.0f < 0.0f) ? 0.0f : brake - 3.0f;
+        const float rate = 180.0f;
+        float delta = rate * dt;
+        if (delta > 5.0f) delta = 5.0f;
+        float next = throttle + (pressed ? delta : -delta);
+        if (next < 0.0f) next = 0.0f;
+        if (next > 100.0f) next = 100.0f;
+        if (std::fabs(next - throttle) > 0.001f) {
+            throttle = next;
+            changed = true;
         }
     }
-    NotifyStateChanged();
+    if (changed) {
+        NotifyStateChanged();
+    }
+}
+
+void GamepadDevice::UpdateBrake(bool pressed, float dt) {
+    bool changed = false;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        const float rate = 200.0f;
+        float delta = rate * dt;
+        if (delta > 5.0f) delta = 5.0f;
+        float next = brake + (pressed ? delta : -delta);
+        if (next < 0.0f) next = 0.0f;
+        if (next > 100.0f) next = 100.0f;
+        if (std::fabs(next - brake) > 0.001f) {
+            brake = next;
+            changed = true;
+        }
+    }
+    if (changed) {
+        NotifyStateChanged();
+    }
 }
 
 void GamepadDevice::UpdateButtons(const Input& input) {
@@ -1013,24 +1005,72 @@ void GamepadDevice::ProcessUHIDEvents() {
 }
 
 void GamepadDevice::USBGadgetPollingThread() {
-    std::cout << "[DEBUG][USBGadgetPollingThread] ENTERED" << std::endl;
-        int flags = fcntl(fd, F_GETFL, 0);
-        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    if (fd < 0) {
+        return;
+    }
 
-        std::unique_lock<std::mutex> lock(state_mutex);
-        while (gadget_running && running) {
-            state_cv.wait(lock, [&]{
-                return !gadget_running || !running || state_dirty.load(std::memory_order_acquire);
-            });
-            if (!gadget_running || !running) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    std::unique_lock<std::mutex> lock(state_mutex);
+    while (gadget_running && running) {
+        state_cv.wait_for(lock, std::chrono::milliseconds(2), [&]{
+            return !gadget_running || !running || state_dirty.load(std::memory_order_acquire);
+        });
+        if (!gadget_running || !running) {
+            break;
+        }
+        bool should_send = state_dirty.exchange(false, std::memory_order_acq_rel);
+        lock.unlock();
+        if (should_send) {
+            SendUHIDReport();
+        }
+        ReadGadgetOutput();
+        lock.lock();
+    }
+}
+
+void GamepadDevice::ReadGadgetOutput() {
+    if (!use_gadget || fd < 0) {
+        return;
+    }
+
+    uint8_t buffer[32];
+    while (gadget_running && running) {
+        ssize_t bytes = read(fd, buffer, sizeof(buffer));
+        if (bytes < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 break;
             }
-            state_dirty.store(false, std::memory_order_release);
-            lock.unlock();
-            SendUHIDReport();
-            lock.lock();
+            break;
         }
-        std::cout << "[DEBUG][USBGadgetPollingThread] EXITED" << std::endl;
+        if (bytes == 0) {
+            break;
+        }
+
+        size_t total = static_cast<size_t>(bytes);
+        size_t offset = 0;
+        while (offset < total) {
+            size_t needed = 7 - gadget_output_pending_len;
+            size_t chunk = total - offset;
+            if (chunk > needed) {
+                chunk = needed;
+            }
+            std::memcpy(gadget_output_pending.data() + gadget_output_pending_len,
+                        buffer + offset,
+                        chunk);
+            gadget_output_pending_len += chunk;
+            offset += chunk;
+
+            if (gadget_output_pending_len == 7) {
+                ParseFFBCommand(gadget_output_pending.data(), 7);
+                gadget_output_pending_len = 0;
+            }
+        }
+    }
 }
 
 void GamepadDevice::FFBUpdateThread() {
@@ -1038,10 +1078,6 @@ void GamepadDevice::FFBUpdateThread() {
     // - FFB force from game (road feedback, tire grip, etc)
     // - User torque from mouse (human turning the wheel)
     // - Autocenter spring (wheel wants to return to center)
-    
-    std::cout << "[DEBUG][FFBUpdateThread] ENTERED" << std::endl;
-    std::cout << "[DEBUG][FFBUpdateThread] thread id: " << std::this_thread::get_id() << std::endl;
-    std::cout << "[DEBUG][FFBUpdateThread] ffb_running=" << ffb_running << ", running=" << running << std::endl;
     
     float velocity = 0.0f;  // Current wheel rotation speed
     using clock = std::chrono::steady_clock;
@@ -1054,16 +1090,22 @@ void GamepadDevice::FFBUpdateThread() {
         }
         auto now = clock::now();
         float dt = std::chrono::duration<float>(now - last).count();
+        if (dt <= 0.0f) dt = 0.001f;
+        if (dt > 0.01f) dt = 0.01f;
         last = now;
-        float total_torque = static_cast<float>(ffb_force) + user_torque;
+
+        float applied_impulse = user_torque;
+        user_torque = 0.0f;
+        float total_torque = static_cast<float>(ffb_force) + applied_impulse;
         if (ffb_autocenter > 0) {
             float spring = -(steering * static_cast<float>(ffb_autocenter)) / 32768.0f;
             total_torque += spring;
         }
 
-        velocity += total_torque * dt;
-        velocity *= 0.98f;
-        steering += velocity;
+        const float torque_scale = 25000.0f;
+        velocity += (total_torque / torque_scale);
+        velocity *= 0.985f;
+        steering += velocity * (dt * 1000.0f);
 
         if (steering < -32768.0f) {
             steering = -32768.0f;
@@ -1079,7 +1121,6 @@ void GamepadDevice::FFBUpdateThread() {
         state_cv.notify_all();
         lock.lock();
     }
-    std::cout << "[DEBUG][FFBUpdateThread] FFB update thread stopped" << std::endl;
 }
 
 void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {

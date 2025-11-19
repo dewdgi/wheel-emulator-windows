@@ -4,14 +4,11 @@
 #include <cerrno>
 #include <fcntl.h>
 #include <sys/ioctl.h>
-#include <fcntl.h>
 #include <unistd.h>
 #include <cstring>
-#include <iostream>
 #include <vector>
 #include <algorithm>
 #include <dirent.h>
-#include <sys/ioctl.h>
 #include <linux/input-event-codes.h>
 #include <atomic>
 extern std::atomic<bool> running;
@@ -21,27 +18,10 @@ void Input::Read() {
     int dummy = 0;
     Read(dummy);
 }
+
 void Input::NotifyInputChanged() {
     input_cv.notify_all();
 }
-// Improved toggle: allow either Ctrl key, and tolerate quick presses
-#include "input.h"
-#include <iostream>
-#include <cerrno>
-#include <fcntl.h>
-#include <sys/ioctl.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <cstring>
-#include <iostream>
-#include <vector>
-#include <algorithm>
-#include <dirent.h>
-#include <sys/ioctl.h>
-#include <linux/input-event-codes.h>
-#include <atomic>
-extern std::atomic<bool> running;
-#include <poll.h>
 
 // Bit manipulation macros for input device capabilities
 #define BITS_PER_LONG (sizeof(long) * 8)
@@ -62,35 +42,11 @@ Input::~Input() {
 
 bool Input::DiscoverKeyboard(const std::string& device_path) {
     // If explicit device path provided, use it
-    std::cout << "[DEBUG][DiscoverKeyboard] called with device_path='" << device_path << "'" << std::endl;
     if (!device_path.empty()) {
         kbd_fd = open(device_path.c_str(), O_RDONLY | O_NONBLOCK);
-        std::cout << "[DEBUG][DiscoverKeyboard] open(" << device_path << ") returned fd=" << kbd_fd << std::endl;
         if (kbd_fd >= 0) {
-            int flags = fcntl(kbd_fd, F_GETFL);
-            std::cout << "[DEBUG][DiscoverKeyboard] kbd_fd F_GETFL flags=" << flags << std::endl;
             char name[256] = {0};
-            if (ioctl(kbd_fd, EVIOCGNAME(sizeof(name)), name) >= 0) {
-                std::cout << "[DEBUG][DiscoverKeyboard] kbd_fd EVIOCGNAME: '" << name << "'" << std::endl;
-            }
-            int grab_result = ioctl(kbd_fd, EVIOCGRAB, 0);
-            std::cout << "[DEBUG][DiscoverKeyboard] kbd_fd EVIOCGRAB(0) result=" << grab_result << ", errno=" << errno << std::endl;
-            unsigned long evbit[8] = {0};
-            if (ioctl(kbd_fd, EVIOCGBIT(0, sizeof(evbit)), evbit) >= 0) {
-                std::cout << "[DEBUG][DiscoverKeyboard] Supported event types:";
-                for (int i = 0; i < 64; ++i) {
-                    if (evbit[0] & (1UL << i)) std::cout << " " << i;
-                }
-                std::cout << std::endl;
-            }
-            unsigned long keybit[8] = {0};
-            if (ioctl(kbd_fd, EVIOCGBIT(EV_KEY, sizeof(keybit)), keybit) >= 0) {
-                std::cout << "[DEBUG][DiscoverKeyboard] Supported keys:";
-                for (int i = 0; i < 64; ++i) {
-                    if (keybit[0] & (1UL << i)) std::cout << " " << i;
-                }
-                std::cout << std::endl;
-            }
+            ioctl(kbd_fd, EVIOCGNAME(sizeof(name)), name);
         }
         if (kbd_fd < 0) {
             std::cerr << "Failed to open keyboard device: " << device_path << ", errno=" << errno << std::endl;
@@ -103,7 +59,6 @@ bool Input::DiscoverKeyboard(const std::string& device_path) {
     }
     
     // Otherwise, auto-detect
-    std::cout << "[DEBUG][DiscoverKeyboard] auto-detecting in /dev/input" << std::endl;
     DIR* dir = opendir("/dev/input");
     if (!dir) {
         std::cerr << "Failed to open /dev/input" << std::endl;
@@ -125,13 +80,11 @@ bool Input::DiscoverKeyboard(const std::string& device_path) {
         }
         std::string path = std::string("/dev/input/") + entry->d_name;
         int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK);
-        std::cout << "[DEBUG][DiscoverKeyboard] open(" << path << ") returned fd=" << fd << std::endl;
         if (fd < 0) {
             continue;
         }
         char name[256] = "Unknown";
         ioctl(fd, EVIOCGNAME(sizeof(name)), name);
-        std::cout << "[DEBUG][DiscoverKeyboard] found device: " << name << " at " << path << std::endl;
         // Convert to lowercase for case-insensitive comparison
         std::string name_lower = name;
         for (char& c : name_lower) {
@@ -176,41 +129,17 @@ bool Input::DiscoverKeyboard(const std::string& device_path) {
     
     // Use the highest priority device
     kbd_fd = candidates[0].fd;
-    std::cout << "[DEBUG][DiscoverKeyboard] Found keyboard: " << candidates[0].name << " at " << candidates[0].path << ", fd=" << kbd_fd << std::endl;
+    std::cout << "Using keyboard: " << candidates[0].name << " at " << candidates[0].path << std::endl;
     return true;
 }
 
 bool Input::DiscoverMouse(const std::string& device_path) {
     // If explicit device path provided, use it
-    std::cout << "[DEBUG][DiscoverMouse] called with device_path='" << device_path << "'" << std::endl;
     if (!device_path.empty()) {
         mouse_fd = open(device_path.c_str(), O_RDONLY | O_NONBLOCK);
-        std::cout << "[DEBUG][DiscoverMouse] open(" << device_path << ") returned fd=" << mouse_fd << std::endl;
         if (mouse_fd >= 0) {
-            int flags = fcntl(mouse_fd, F_GETFL);
-            std::cout << "[DEBUG][DiscoverMouse] mouse_fd F_GETFL flags=" << flags << std::endl;
             char name[256] = {0};
-            if (ioctl(mouse_fd, EVIOCGNAME(sizeof(name)), name) >= 0) {
-                std::cout << "[DEBUG][DiscoverMouse] mouse_fd EVIOCGNAME: '" << name << "'" << std::endl;
-            }
-            int grab_result = ioctl(mouse_fd, EVIOCGRAB, 0);
-            std::cout << "[DEBUG][DiscoverMouse] mouse_fd EVIOCGRAB(0) result=" << grab_result << ", errno=" << errno << std::endl;
-            unsigned long evbit[8] = {0};
-            if (ioctl(mouse_fd, EVIOCGBIT(0, sizeof(evbit)), evbit) >= 0) {
-                std::cout << "[DEBUG][DiscoverMouse] Supported event types:";
-                for (int i = 0; i < 64; ++i) {
-                    if (evbit[0] & (1UL << i)) std::cout << " " << i;
-                }
-                std::cout << std::endl;
-            }
-            unsigned long relbit[8] = {0};
-            if (ioctl(mouse_fd, EVIOCGBIT(EV_REL, sizeof(relbit)), relbit) >= 0) {
-                std::cout << "[DEBUG][DiscoverMouse] Supported rel codes:";
-                for (int i = 0; i < 64; ++i) {
-                    if (relbit[0] & (1UL << i)) std::cout << " " << i;
-                }
-                std::cout << std::endl;
-            }
+            ioctl(mouse_fd, EVIOCGNAME(sizeof(name)), name);
         }
         if (mouse_fd < 0) {
             std::cerr << "Failed to open mouse device: " << device_path << ", errno=" << errno << std::endl;
@@ -218,12 +147,11 @@ bool Input::DiscoverMouse(const std::string& device_path) {
         }
         char name[256] = "Unknown";
         ioctl(mouse_fd, EVIOCGNAME(sizeof(name)), name);
-        std::cout << "Using configured mouse: " << name << " at " << device_path << std::endl;
+        std::cout << "Using mouse: " << name << " at " << device_path << std::endl;
         return true;
     }
     
     // Otherwise, auto-detect
-    std::cout << "[DEBUG][DiscoverMouse] auto-detecting in /dev/input" << std::endl;
     DIR* dir = opendir("/dev/input");
     if (!dir) {
         std::cerr << "Failed to open /dev/input" << std::endl;
@@ -244,7 +172,6 @@ bool Input::DiscoverMouse(const std::string& device_path) {
         }
         std::string path = std::string("/dev/input/") + entry->d_name;
         int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK);
-        std::cout << "[DEBUG][DiscoverMouse] open(" << path << ") returned fd=" << fd << std::endl;
         if (fd < 0) {
             continue;
         }
@@ -254,14 +181,12 @@ bool Input::DiscoverMouse(const std::string& device_path) {
         if (test_bit(REL_X, rel_bitmask)) {
             char name[256] = "Unknown";
             ioctl(fd, EVIOCGNAME(sizeof(name)), name);
-            std::cout << "[DEBUG][DiscoverMouse] found device: " << name << " at " << path << std::endl;
             std::string name_lower = name;
             for (char& c : name_lower) {
                 c = tolower(c);
             }
             // Skip keyboard devices that have pointer capabilities
             if (name_lower.find("keyboard") != std::string::npos) {
-                std::cout << "[DEBUG][DiscoverMouse] skipping device (keyboard capability): " << name << std::endl;
                 close(fd);
                 continue;
             }
@@ -288,7 +213,6 @@ bool Input::DiscoverMouse(const std::string& device_path) {
                      name_lower.find("beken") != std::string::npos) {
                 priority = 100;
             }
-            std::cout << "[DEBUG][DiscoverMouse] candidate: " << name << ", priority=" << priority << std::endl;
             candidates.push_back({path, name, priority});
         }
         close(fd);
@@ -310,23 +234,20 @@ bool Input::DiscoverMouse(const std::string& device_path) {
     // Use the highest priority device
     auto& best = candidates[0];
     mouse_fd = open(best.path.c_str(), O_RDONLY | O_NONBLOCK);
-    std::cout << "[DEBUG][DiscoverMouse] open(best.path) returned fd=" << mouse_fd << std::endl;
     if (mouse_fd < 0) {
         std::cerr << "Failed to open mouse: " << best.path << ", errno=" << errno << std::endl;
         return false;
     }
-    std::cout << "[DEBUG][DiscoverMouse] Found mouse: " << best.name << " at " << best.path << ", fd=" << mouse_fd << std::endl;
+    std::cout << "Using mouse: " << best.name << " at " << best.path << std::endl;
     return true;
 }
 
 void Input::Read(int& mouse_dx) {
     if (!running) {
-        std::cout << "[DEBUG][Input::Read] running is false, returning early" << std::endl;
         return;
     }
     mouse_dx = 0;
     struct input_event ev;
-    std::cout << "[DEBUG][Input::Read] Entered, running=" << running << ", getuid()=" << getuid() << std::endl;
 
     // Poll both keyboard and mouse fds for available events (non-blocking, signal-safe)
     struct pollfd pfds[2];
@@ -353,9 +274,7 @@ void Input::Read(int& mouse_dx) {
     // Keyboard events
     if (kbd_fd >= 0 && (pfds[0].revents & POLLIN)) {
         ssize_t n = read(kbd_fd, &ev, sizeof(ev));
-        if (!running) {
-            std::cout << "[DEBUG][Input::Read] running is false inside kbd read, breaking" << std::endl;
-        } else if (n == -1) {
+        if (n == -1) {
             if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
                 std::cerr << "[Input::Read] kbd_fd read error: " << strerror(errno) << std::endl;
         } else if (n == sizeof(ev)) {
@@ -369,9 +288,7 @@ void Input::Read(int& mouse_dx) {
     int mouse_idx = (kbd_fd >= 0) ? 1 : 0;
     if (mouse_fd >= 0 && (pfds[mouse_idx].revents & POLLIN)) {
         ssize_t n = read(mouse_fd, &ev, sizeof(ev));
-        if (!running) {
-            std::cout << "[DEBUG][Input::Read] running is false inside mouse read, breaking" << std::endl;
-        } else if (n == -1) {
+        if (n == -1) {
             if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
                 std::cerr << "[Input::Read] mouse_fd read error: " << strerror(errno) << std::endl;
         } else if (n == sizeof(ev)) {
@@ -381,7 +298,6 @@ void Input::Read(int& mouse_dx) {
             // (Optional: handle mouse buttons if needed)
         }
     }
-    std::cout << "[DEBUG][Input::Read] returning, running=" << running << std::endl;
 }
 
 // --- Place these at the end of the file ---
@@ -402,9 +318,15 @@ void Input::Grab(bool enable) {
     int grab = enable ? 1 : 0;
     if (kbd_fd >= 0 && fcntl(kbd_fd, F_GETFD) != -1) {
         if (ioctl(kbd_fd, EVIOCGRAB, grab) < 0) {
-            std::cerr << "Failed to " << (enable ? "grab" : "ungrab") << " keyboard (fd=" << kbd_fd << ") errno=" << errno << std::endl;
+            if (enable) {
+                std::cerr << "Failed to grab keyboard (fd=" << kbd_fd << ") errno=" << errno << std::endl;
+            } else if (errno != EINVAL && errno != ENODEV) {
+                std::cerr << "Failed to release keyboard (fd=" << kbd_fd << ") errno=" << errno << std::endl;
+            }
         } else {
-            std::cout << (enable ? "Grabbed" : "Ungrabbed") << " keyboard (fd=" << kbd_fd << ")" << std::endl;
+            if (enable) {
+                std::cout << "Grabbed keyboard (fd=" << kbd_fd << ")" << std::endl;
+            }
         }
     } else if (enable) {
         std::cerr << "Cannot grab keyboard: invalid or closed file descriptor." << std::endl;
@@ -412,9 +334,15 @@ void Input::Grab(bool enable) {
 
     if (mouse_fd >= 0 && fcntl(mouse_fd, F_GETFD) != -1) {
         if (ioctl(mouse_fd, EVIOCGRAB, grab) < 0) {
-            std::cerr << "Failed to " << (enable ? "grab" : "ungrab") << " mouse (fd=" << mouse_fd << ") errno=" << errno << std::endl;
+            if (enable) {
+                std::cerr << "Failed to grab mouse (fd=" << mouse_fd << ") errno=" << errno << std::endl;
+            } else if (errno != EINVAL && errno != ENODEV) {
+                std::cerr << "Failed to release mouse (fd=" << mouse_fd << ") errno=" << errno << std::endl;
+            }
         } else {
-            std::cout << (enable ? "Grabbed" : "Ungrabbed") << " mouse (fd=" << mouse_fd << ")" << std::endl;
+            if (enable) {
+                std::cout << "Grabbed mouse (fd=" << mouse_fd << ")" << std::endl;
+            }
         }
     } else if (enable) {
         std::cerr << "Cannot grab mouse: invalid or closed file descriptor." << std::endl;
