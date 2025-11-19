@@ -1087,7 +1087,7 @@ void GamepadDevice::FFBUpdateThread() {
         if (alpha > 1.0f) alpha = 1.0f;
         filtered_ffb += (target_force - filtered_ffb) * alpha;
 
-        const float offset_limit = 14000.0f;
+        const float offset_limit = 22000.0f;
         float next_offset = filtered_ffb;
         if (next_offset > offset_limit) next_offset = offset_limit;
         if (next_offset < -offset_limit) next_offset = -offset_limit;
@@ -1201,7 +1201,8 @@ float GamepadDevice::ShapeFFBTorque(float raw_force) const {
         gain = min_gain + (slip_weight * (1.0f - min_gain));
     }
 
-    return raw_force * gain;
+    const float boost = 3.0f;
+    return raw_force * gain * boost;
 }
 
 bool GamepadDevice::ApplySteeringLocked() {
