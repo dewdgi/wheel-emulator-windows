@@ -84,26 +84,6 @@ GamepadDevice::GamepadDevice()
     state_dirty = false;
 }
 
-// Clutch axis update (ramp like throttle/brake)
-void GamepadDevice::UpdateClutch(bool pressed, float dt) {
-    bool changed = false;
-    {
-        std::lock_guard<std::mutex> lock(state_mutex);
-        const float rate = 200.0f; // match pedal timings (0.5s full sweep)
-        float delta = rate * dt;
-        if (delta > 20.0f) delta = 20.0f;
-        float next = clutch + (pressed ? delta : -delta);
-        if (next < 0.0f) next = 0.0f;
-        if (next > 100.0f) next = 100.0f;
-        if (std::fabs(next - clutch) > 0.001f) {
-            clutch = next;
-            changed = true;
-        }
-    }
-    if (changed) {
-        NotifyStateChanged();
-    }
-}
 // Query enabled state (mutex-protected)
 bool GamepadDevice::IsEnabled() {
     std::lock_guard<std::mutex> lock(state_mutex);
@@ -578,6 +558,7 @@ void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
     if (delta == 0) {
         return;
     }
+
     bool notify = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex);
@@ -585,30 +566,26 @@ void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
             delta = 0;
         }
         if (delta != 0) {
-            const float gain = static_cast<float>(sensitivity) * 140.0f;
+            const float gain = static_cast<float>(sensitivity) * 35.0f;
             user_torque += delta * gain;
-            const float max_impulse = 80000.0f;
+            const float max_impulse = 20000.0f;
             if (user_torque > max_impulse) user_torque = max_impulse;
             if (user_torque < -max_impulse) user_torque = -max_impulse;
             notify = true;
         }
     }
+
     if (notify) {
         NotifyStateChanged();
     }
 }
 
-void GamepadDevice::UpdateThrottle(bool pressed, float dt) {
+void GamepadDevice::UpdateThrottle(bool pressed, float /*dt*/) {
     bool changed = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex);
-        const float rate = 200.0f; // reach 0-100% in 0.5 seconds
-        float delta = rate * dt;
-        if (delta > 20.0f) delta = 20.0f;
-        float next = throttle + (pressed ? delta : -delta);
-        if (next < 0.0f) next = 0.0f;
-        if (next > 100.0f) next = 100.0f;
-        if (std::fabs(next - throttle) > 0.001f) {
+        float next = pressed ? 100.0f : 0.0f;
+        if (throttle != next) {
             throttle = next;
             changed = true;
         }
@@ -618,18 +595,28 @@ void GamepadDevice::UpdateThrottle(bool pressed, float dt) {
     }
 }
 
-void GamepadDevice::UpdateBrake(bool pressed, float dt) {
+void GamepadDevice::UpdateBrake(bool pressed, float /*dt*/) {
     bool changed = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex);
-        const float rate = 200.0f; // reach 0-100% in 0.5 seconds
-        float delta = rate * dt;
-        if (delta > 20.0f) delta = 20.0f;
-        float next = brake + (pressed ? delta : -delta);
-        if (next < 0.0f) next = 0.0f;
-        if (next > 100.0f) next = 100.0f;
-        if (std::fabs(next - brake) > 0.001f) {
+        float next = pressed ? 100.0f : 0.0f;
+        if (brake != next) {
             brake = next;
+            changed = true;
+        }
+    }
+    if (changed) {
+        NotifyStateChanged();
+    }
+}
+
+void GamepadDevice::UpdateClutch(bool pressed, float /*dt*/) {
+    bool changed = false;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        float next = pressed ? 100.0f : 0.0f;
+        if (clutch != next) {
+            clutch = next;
             changed = true;
         }
     }
@@ -641,8 +628,6 @@ void GamepadDevice::UpdateBrake(bool pressed, float dt) {
 void GamepadDevice::UpdateButtons(const Input& input) {
     {
         std::lock_guard<std::mutex> lock(state_mutex);
-        // Map keyboard keys to G29 buttons (26 total, see logics.md)
-        // 13 base buttons
         buttons["BTN_SOUTH"] = input.IsKeyPressed(KEY_Q);      // Cross
         buttons["BTN_EAST"] = input.IsKeyPressed(KEY_E);       // Circle
         buttons["BTN_WEST"] = input.IsKeyPressed(KEY_F);       // Square
@@ -656,9 +641,7 @@ void GamepadDevice::UpdateButtons(const Input& input) {
         buttons["BTN_THUMBL"] = input.IsKeyPressed(KEY_O);     // L3
         buttons["BTN_THUMBR"] = input.IsKeyPressed(KEY_P);     // R3
         buttons["BTN_MODE"] = input.IsKeyPressed(KEY_1);       // PS
-        // Dead button
         buttons["BTN_DEAD"] = input.IsKeyPressed(KEY_2);       // Dead
-        // 12 trigger-happy (D-pad + rotary)
         buttons["BTN_TRIGGER_HAPPY1"] = input.IsKeyPressed(KEY_3);   // D-pad Up
         buttons["BTN_TRIGGER_HAPPY2"] = input.IsKeyPressed(KEY_4);   // D-pad Down
         buttons["BTN_TRIGGER_HAPPY3"] = input.IsKeyPressed(KEY_5);   // D-pad Left
@@ -1102,10 +1085,10 @@ void GamepadDevice::FFBUpdateThread() {
             total_torque += spring;
         }
 
-        const float torque_scale = 8000.0f;
+        const float torque_scale = 25000.0f;
         velocity += (total_torque / torque_scale);
-        velocity *= 0.995f;
-        steering += velocity * (dt * 50000.0f);
+        velocity *= 0.985f;
+        steering += velocity * (dt * 1000.0f);
 
         if (steering < -32768.0f) {
             steering = -32768.0f;
