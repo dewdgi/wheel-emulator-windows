@@ -562,17 +562,12 @@ void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
     bool notify = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex);
-        if (delta > -2 && delta < 2) {
-            delta = 0;
-        }
-        if (delta != 0) {
-            const float gain = static_cast<float>(sensitivity) * 70.0f;
-            user_torque += delta * gain;
-            const float max_impulse = 20000.0f;
-            if (user_torque > max_impulse) user_torque = max_impulse;
-            if (user_torque < -max_impulse) user_torque = -max_impulse;
-            notify = true;
-        }
+        const float gain = static_cast<float>(sensitivity) * 70.0f;
+        user_torque += delta * gain;
+        const float max_impulse = 20000.0f;
+        if (user_torque > max_impulse) user_torque = max_impulse;
+        if (user_torque < -max_impulse) user_torque = -max_impulse;
+        notify = true;
     }
 
     if (notify) {
@@ -1087,7 +1082,10 @@ void GamepadDevice::FFBUpdateThread() {
 
         const float torque_scale = 25000.0f;
         velocity += (total_torque / torque_scale);
-        velocity *= 0.985f;
+        velocity *= 0.97f;
+        if (std::fabs(total_torque) < 25.0f && std::fabs(velocity) < 5.0f) {
+            velocity = 0.0f;
+        }
         steering += velocity * (dt * 1000.0f);
 
         if (steering < -32768.0f) {
@@ -1122,8 +1120,8 @@ void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
             {
                 // Convert 0x00-0xFF range to -128..127 force value
                 int8_t force = static_cast<int8_t>(data[2]) - 0x80;
-                // Invert direction (Logitech positive pushes toward center) and reduce strength
-                ffb_force = static_cast<int16_t>(-force) * 96;
+                // Invert direction (Logitech positive pushes toward center) and keep strength modest
+                ffb_force = static_cast<int16_t>(-force) * 48;
             }
             break;
             
@@ -1140,13 +1138,13 @@ void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
             // data[2], data[3] = autocenter strength
             // data[4] = spring rate
             if (data[1] == 0x0d) {
-                ffb_autocenter = static_cast<int16_t>(data[2]) * 32;  // Softer spring
+                ffb_autocenter = static_cast<int16_t>(data[2]) * 16;  // Gentler spring
             }
             break;
             
         case 0x14:  // Activate autocenter
             if (ffb_autocenter == 0) {
-                ffb_autocenter = 2048;  // Default gentle autocenter
+                ffb_autocenter = 1024;  // Default light autocenter
             }
             break;
             
