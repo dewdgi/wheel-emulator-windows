@@ -83,6 +83,7 @@ private:
     float steering;
     float user_steering;
     float ffb_offset;
+    float ffb_velocity;
     float throttle;
     float brake;
     float clutch;

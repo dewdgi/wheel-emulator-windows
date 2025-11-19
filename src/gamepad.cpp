@@ -77,7 +77,7 @@ GamepadDevice::~GamepadDevice() {
 
 GamepadDevice::GamepadDevice() 
         : fd(-1), use_uhid(false), use_gadget(false), gadget_running(false),
-            enabled(false), steering(0), user_steering(0.0f), ffb_offset(0.0f),
+            enabled(false), steering(0), user_steering(0.0f), ffb_offset(0.0f), ffb_velocity(0.0f),
             throttle(0.0f), brake(0.0f), clutch(0.0f), dpad_x(0), dpad_y(0),
             ffb_force(0), ffb_autocenter(0), ffb_enabled(true),
             gadget_output_pending_len(0) {
@@ -1075,32 +1075,47 @@ void GamepadDevice::FFBUpdateThread() {
         if (dt > 0.01f) dt = 0.01f;
         last = now;
 
-        float target_force = ShapeFFBTorque(static_cast<float>(ffb_force));
-        if (ffb_autocenter > 0) {
-            float spring = -(steering * static_cast<float>(ffb_autocenter)) / 32768.0f;
-            target_force += spring;
-        }
+        float commanded_force = ShapeFFBTorque(static_cast<float>(ffb_force));
 
-        const float smoothing_rate = 28.0f;
-        float alpha = 1.0f - std::exp(-dt * smoothing_rate);
+        // Filter only the game-provided torque to kill high frequency chatter
+        const float force_filter_hz = 38.0f;
+        float alpha = 1.0f - std::exp(-dt * force_filter_hz);
         if (alpha < 0.0f) alpha = 0.0f;
         if (alpha > 1.0f) alpha = 1.0f;
-        filtered_ffb += (target_force - filtered_ffb) * alpha;
+        filtered_ffb += (commanded_force - filtered_ffb) * alpha;
+
+        float spring = 0.0f;
+        if (ffb_autocenter > 0) {
+            spring = -(steering * static_cast<float>(ffb_autocenter)) / 32768.0f;
+        }
 
         const float offset_limit = 22000.0f;
-        float target_offset = filtered_ffb;
+        float target_offset = filtered_ffb + spring;
         if (target_offset > offset_limit) target_offset = offset_limit;
         if (target_offset < -offset_limit) target_offset = -offset_limit;
 
-        const float slew_rate = 90000.0f; // Units per second the FFB can move the wheel
-        float max_step = slew_rate * dt;
-        if (max_step < 120.0f) {
-            max_step = 120.0f;
+        // Critically damped second-order response for smooth motion without oscillation
+        const float stiffness = 120.0f;
+        const float damping = 8.0f;
+        const float max_velocity = 90000.0f;
+        float error = target_offset - ffb_offset;
+        ffb_velocity += error * stiffness * dt;
+        float damping_factor = std::exp(-damping * dt);
+        ffb_velocity *= damping_factor;
+        if (ffb_velocity > max_velocity) {
+            ffb_velocity = max_velocity;
+        } else if (ffb_velocity < -max_velocity) {
+            ffb_velocity = -max_velocity;
         }
-        float delta = target_offset - ffb_offset;
-        if (delta > max_step) delta = max_step;
-        if (delta < -max_step) delta = -max_step;
-        ffb_offset += delta;
+
+        ffb_offset += ffb_velocity * dt;
+        if (ffb_offset > offset_limit) {
+            ffb_offset = offset_limit;
+            ffb_velocity = 0.0f;
+        } else if (ffb_offset < -offset_limit) {
+            ffb_offset = -offset_limit;
+            ffb_velocity = 0.0f;
+        }
 
         bool steering_changed = ApplySteeringLocked();
         lock.unlock();

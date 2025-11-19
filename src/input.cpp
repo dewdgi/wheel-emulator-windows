@@ -12,7 +12,6 @@
 #include <linux/input-event-codes.h>
 #include <atomic>
 extern std::atomic<bool> running;
-#include <poll.h>
 
 void Input::Read() {
     int dummy = 0;
@@ -247,57 +246,47 @@ void Input::Read(int& mouse_dx) {
         return;
     }
     mouse_dx = 0;
-    struct input_event ev;
-
-    // Poll both keyboard and mouse fds for available events (non-blocking, signal-safe)
-    struct pollfd pfds[2];
-    int nfds = 0;
-    if (kbd_fd >= 0) {
-        pfds[nfds].fd = kbd_fd;
-        pfds[nfds].events = POLLIN;
-        nfds++;
-    }
-    if (mouse_fd >= 0) {
-        pfds[nfds].fd = mouse_fd;
-        pfds[nfds].events = POLLIN;
-        nfds++;
-    }
-    if (nfds == 0) return;
-
-    // Poll with zero timeout (non-blocking)
-    int pret = poll(pfds, nfds, 0);
-    if (pret < 0 && errno != EINTR) {
-        std::cerr << "[Input::Read] poll() error: " << strerror(errno) << std::endl;
-        return;
-    }
-
-    // Keyboard events
-    if (kbd_fd >= 0 && (pfds[0].revents & POLLIN)) {
-        ssize_t n = read(kbd_fd, &ev, sizeof(ev));
-        if (n == -1) {
-            if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
-                std::cerr << "[Input::Read] kbd_fd read error: " << strerror(errno) << std::endl;
-        } else if (n == sizeof(ev)) {
-            if (ev.type == EV_KEY && ev.code < KEY_MAX) {
-                keys[ev.code] = (ev.value != 0);
+    auto drain_device = [&](int fd, bool is_keyboard) {
+        if (fd < 0) {
+            return;
+        }
+        constexpr int kMaxEventsPerDevice = 256;
+        int processed = 0;
+        struct input_event ev;
+        while (processed < kMaxEventsPerDevice) {
+            ssize_t n = read(fd, &ev, sizeof(ev));
+            if (n == -1) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    break;
+                }
+                std::cerr << "[Input::Read] fd=" << fd << " read error: " << strerror(errno) << std::endl;
+                break;
+            }
+            if (n == 0) {
+                break;
+            }
+            if (n != sizeof(ev)) {
+                std::cerr << "[Input::Read] short read from fd=" << fd << std::endl;
+                break;
+            }
+            processed++;
+            if (is_keyboard) {
+                if (ev.type == EV_KEY && ev.code < KEY_MAX) {
+                    keys[ev.code] = (ev.value != 0);
+                }
+            } else {
+                if (ev.type == EV_REL && ev.code == REL_X) {
+                    mouse_dx += ev.value;
+                }
             }
         }
-    }
+    };
 
-    // Mouse events
-    int mouse_idx = (kbd_fd >= 0) ? 1 : 0;
-    if (mouse_fd >= 0 && (pfds[mouse_idx].revents & POLLIN)) {
-        ssize_t n = read(mouse_fd, &ev, sizeof(ev));
-        if (n == -1) {
-            if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
-                std::cerr << "[Input::Read] mouse_fd read error: " << strerror(errno) << std::endl;
-        } else if (n == sizeof(ev)) {
-            if (ev.type == EV_REL && ev.code == REL_X) {
-                mouse_dx += ev.value;
-            }
-            // (Optional: handle mouse buttons if needed)
-        }
-    }
+    drain_device(kbd_fd, true);
+    drain_device(mouse_fd, false);
 }
 
 // --- Place these at the end of the file ---
