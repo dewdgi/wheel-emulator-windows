@@ -36,13 +36,14 @@ Input::~Input() {
 
 bool Input::DiscoverKeyboard(const std::string& device_path) {
     // If explicit device path provided, use it
+    std::cout << "[DEBUG][DiscoverKeyboard] called with device_path='" << device_path << "'" << std::endl;
     if (!device_path.empty()) {
         kbd_fd = open(device_path.c_str(), O_RDONLY | O_NONBLOCK);
+        std::cout << "[DEBUG][DiscoverKeyboard] open(" << device_path << ") returned fd=" << kbd_fd << std::endl;
         if (kbd_fd < 0) {
-            std::cerr << "Failed to open keyboard device: " << device_path << std::endl;
+            std::cerr << "Failed to open keyboard device: " << device_path << ", errno=" << errno << std::endl;
             return false;
         }
-        
         char name[256] = "Unknown";
         ioctl(kbd_fd, EVIOCGNAME(sizeof(name)), name);
         std::cout << "Using configured keyboard: " << name << " at " << device_path << std::endl;
@@ -50,6 +51,7 @@ bool Input::DiscoverKeyboard(const std::string& device_path) {
     }
     
     // Otherwise, auto-detect
+    std::cout << "[DEBUG][DiscoverKeyboard] auto-detecting in /dev/input" << std::endl;
     DIR* dir = opendir("/dev/input");
     if (!dir) {
         std::cerr << "Failed to open /dev/input" << std::endl;
@@ -69,22 +71,20 @@ bool Input::DiscoverKeyboard(const std::string& device_path) {
         if (strncmp(entry->d_name, "event", 5) != 0) {
             continue;
         }
-        
         std::string path = std::string("/dev/input/") + entry->d_name;
         int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK);
+        std::cout << "[DEBUG][DiscoverKeyboard] open(" << path << ") returned fd=" << fd << std::endl;
         if (fd < 0) {
             continue;
         }
-        
         char name[256] = "Unknown";
         ioctl(fd, EVIOCGNAME(sizeof(name)), name);
-        
+        std::cout << "[DEBUG][DiscoverKeyboard] found device: " << name << " at " << path << std::endl;
         // Convert to lowercase for case-insensitive comparison
         std::string name_lower = name;
         for (char& c : name_lower) {
             c = tolower(c);
         }
-        
         if (name_lower.find("keyboard") != std::string::npos) {
             int priority = 50; // default
             
@@ -124,19 +124,20 @@ bool Input::DiscoverKeyboard(const std::string& device_path) {
     
     // Use the highest priority device
     kbd_fd = candidates[0].fd;
-    std::cout << "Found keyboard: " << candidates[0].name << " at " << candidates[0].path << std::endl;
+    std::cout << "[DEBUG][DiscoverKeyboard] Found keyboard: " << candidates[0].name << " at " << candidates[0].path << ", fd=" << kbd_fd << std::endl;
     return true;
 }
 
 bool Input::DiscoverMouse(const std::string& device_path) {
     // If explicit device path provided, use it
+    std::cout << "[DEBUG][DiscoverMouse] called with device_path='" << device_path << "'" << std::endl;
     if (!device_path.empty()) {
         mouse_fd = open(device_path.c_str(), O_RDONLY | O_NONBLOCK);
+        std::cout << "[DEBUG][DiscoverMouse] open(" << device_path << ") returned fd=" << mouse_fd << std::endl;
         if (mouse_fd < 0) {
-            std::cerr << "Failed to open mouse device: " << device_path << std::endl;
+            std::cerr << "Failed to open mouse device: " << device_path << ", errno=" << errno << std::endl;
             return false;
         }
-        
         char name[256] = "Unknown";
         ioctl(mouse_fd, EVIOCGNAME(sizeof(name)), name);
         std::cout << "Using configured mouse: " << name << " at " << device_path << std::endl;
@@ -144,6 +145,7 @@ bool Input::DiscoverMouse(const std::string& device_path) {
     }
     
     // Otherwise, auto-detect
+    std::cout << "[DEBUG][DiscoverMouse] auto-detecting in /dev/input" << std::endl;
     DIR* dir = opendir("/dev/input");
     if (!dir) {
         std::cerr << "Failed to open /dev/input" << std::endl;
@@ -162,35 +164,31 @@ bool Input::DiscoverMouse(const std::string& device_path) {
         if (strncmp(entry->d_name, "event", 5) != 0) {
             continue;
         }
-        
         std::string path = std::string("/dev/input/") + entry->d_name;
         int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK);
+        std::cout << "[DEBUG][DiscoverMouse] open(" << path << ") returned fd=" << fd << std::endl;
         if (fd < 0) {
             continue;
         }
-        
         // Check for REL_X capability
         unsigned long rel_bitmask[NBITS(REL_MAX)] = {0};
         ioctl(fd, EVIOCGBIT(EV_REL, sizeof(rel_bitmask)), rel_bitmask);
-        
         if (test_bit(REL_X, rel_bitmask)) {
             char name[256] = "Unknown";
             ioctl(fd, EVIOCGNAME(sizeof(name)), name);
-            
+            std::cout << "[DEBUG][DiscoverMouse] found device: " << name << " at " << path << std::endl;
             std::string name_lower = name;
             for (char& c : name_lower) {
                 c = tolower(c);
             }
-            
             // Skip keyboard devices that have pointer capabilities
             if (name_lower.find("keyboard") != std::string::npos) {
+                std::cout << "[DEBUG][DiscoverMouse] skipping device (keyboard capability): " << name << std::endl;
                 close(fd);
                 continue;
             }
-            
             // Prioritize: avoid touchpads and virtual devices
             int priority = 50; // default
-            
             // Deprioritize touchpads
             if (name_lower.find("touchpad") != std::string::npos) {
                 priority = 10;
@@ -212,10 +210,9 @@ bool Input::DiscoverMouse(const std::string& device_path) {
                      name_lower.find("beken") != std::string::npos) {
                 priority = 100;
             }
-            
+            std::cout << "[DEBUG][DiscoverMouse] candidate: " << name << ", priority=" << priority << std::endl;
             candidates.push_back({path, name, priority});
         }
-        
         close(fd);
     }
     
@@ -235,12 +232,12 @@ bool Input::DiscoverMouse(const std::string& device_path) {
     // Use the highest priority device
     auto& best = candidates[0];
     mouse_fd = open(best.path.c_str(), O_RDONLY | O_NONBLOCK);
+    std::cout << "[DEBUG][DiscoverMouse] open(best.path) returned fd=" << mouse_fd << std::endl;
     if (mouse_fd < 0) {
-        std::cerr << "Failed to open mouse: " << best.path << std::endl;
+        std::cerr << "Failed to open mouse: " << best.path << ", errno=" << errno << std::endl;
         return false;
     }
-    
-    std::cout << "Found mouse: " << best.name << " at " << best.path << std::endl;
+    std::cout << "[DEBUG][DiscoverMouse] Found mouse: " << best.name << " at " << best.path << ", fd=" << mouse_fd << std::endl;
     return true;
 }
 
