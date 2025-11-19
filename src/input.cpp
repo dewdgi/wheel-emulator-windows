@@ -294,6 +294,10 @@ bool Input::DiscoverMouse(const std::string& device_path) {
 }
 
 void Input::Read(int& mouse_dx) {
+    if (!running) {
+        std::cout << "[DEBUG][Input::Read] running is false, returning early" << std::endl;
+        return;
+    }
     mouse_dx = 0;
     struct input_event ev;
     std::cout << "[DEBUG][Input::Read] Entered, running=" << running << ", getuid()=" << getuid() << std::endl;
@@ -322,8 +326,12 @@ void Input::Read(int& mouse_dx) {
 
     // Keyboard events
     if (kbd_fd >= 0 && (pfds[0].revents & POLLIN)) {
-        while (true) {
+        while (running) {
             ssize_t n = read(kbd_fd, &ev, sizeof(ev));
+            if (!running) {
+                std::cout << "[DEBUG][Input::Read] running is false inside kbd read loop, breaking" << std::endl;
+                break;
+            }
             if (n == -1) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) break;
                 std::cerr << "[Input::Read] kbd_fd read error: " << strerror(errno) << std::endl;
@@ -342,8 +350,12 @@ void Input::Read(int& mouse_dx) {
     // Mouse events
     int mouse_idx = (kbd_fd >= 0) ? 1 : 0;
     if (mouse_fd >= 0 && (pfds[mouse_idx].revents & POLLIN)) {
-        while (true) {
+        while (running) {
             ssize_t n = read(mouse_fd, &ev, sizeof(ev));
+            if (!running) {
+                std::cout << "[DEBUG][Input::Read] running is false inside mouse read loop, breaking" << std::endl;
+                break;
+            }
             if (n == -1) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) break;
                 std::cerr << "[Input::Read] mouse_fd read error: " << strerror(errno) << std::endl;
