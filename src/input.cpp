@@ -352,23 +352,15 @@ void Input::Read(int& mouse_dx) {
 
     // Keyboard events
     if (kbd_fd >= 0 && (pfds[0].revents & POLLIN)) {
-        while (running) {
-            ssize_t n = read(kbd_fd, &ev, sizeof(ev));
-            if (!running) {
-                std::cout << "[DEBUG][Input::Read] running is false inside kbd read loop, breaking" << std::endl;
-                break;
-            }
-            if (n == -1) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) break;
+        ssize_t n = read(kbd_fd, &ev, sizeof(ev));
+        if (!running) {
+            std::cout << "[DEBUG][Input::Read] running is false inside kbd read, breaking" << std::endl;
+        } else if (n == -1) {
+            if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
                 std::cerr << "[Input::Read] kbd_fd read error: " << strerror(errno) << std::endl;
-                break;
-            }
-            if (n == sizeof(ev)) {
-                if (ev.type == EV_KEY && ev.code < KEY_MAX) {
-                    keys[ev.code] = (ev.value != 0);
-                }
-            } else {
-                break;
+        } else if (n == sizeof(ev)) {
+            if (ev.type == EV_KEY && ev.code < KEY_MAX) {
+                keys[ev.code] = (ev.value != 0);
             }
         }
     }
@@ -376,25 +368,17 @@ void Input::Read(int& mouse_dx) {
     // Mouse events
     int mouse_idx = (kbd_fd >= 0) ? 1 : 0;
     if (mouse_fd >= 0 && (pfds[mouse_idx].revents & POLLIN)) {
-        while (running) {
-            ssize_t n = read(mouse_fd, &ev, sizeof(ev));
-            if (!running) {
-                std::cout << "[DEBUG][Input::Read] running is false inside mouse read loop, breaking" << std::endl;
-                break;
-            }
-            if (n == -1) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) break;
+        ssize_t n = read(mouse_fd, &ev, sizeof(ev));
+        if (!running) {
+            std::cout << "[DEBUG][Input::Read] running is false inside mouse read, breaking" << std::endl;
+        } else if (n == -1) {
+            if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
                 std::cerr << "[Input::Read] mouse_fd read error: " << strerror(errno) << std::endl;
-                break;
+        } else if (n == sizeof(ev)) {
+            if (ev.type == EV_REL && ev.code == REL_X) {
+                mouse_dx += ev.value;
             }
-            if (n == sizeof(ev)) {
-                if (ev.type == EV_REL && ev.code == REL_X) {
-                    mouse_dx += ev.value;
-                }
-                // (Optional: handle mouse buttons if needed)
-            } else {
-                break;
-            }
+            // (Optional: handle mouse buttons if needed)
         }
     }
     std::cout << "[DEBUG][Input::Read] returning, running=" << running << std::endl;
