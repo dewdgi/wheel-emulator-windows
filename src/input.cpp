@@ -371,6 +371,7 @@ void Input::Read(int& mouse_dx) {
             }
         }
     }
+    std::cout << "[DEBUG][Input::Read] returning, running=" << running << std::endl;
 }
 
 // --- Place these at the end of the file ---

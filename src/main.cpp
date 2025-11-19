@@ -75,7 +75,7 @@ int main(int, char*[]) {
 
     int loop_counter = 0;
     while (running) {
-        std::cout << "[DEBUG][main] LOOP START, count=" << loop_counter << ", running=" << running << std::endl;
+        std::cout << "[DEBUG][main] TOP OF LOOP, count=" << loop_counter << ", running=" << running << std::endl;
         int mouse_dx = 0;
         std::cout << "[DEBUG][main] calling input.Read(), count=" << loop_counter << std::endl;
         input.Read(mouse_dx);
