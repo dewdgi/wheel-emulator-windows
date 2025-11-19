@@ -40,6 +40,10 @@ bool Input::DiscoverKeyboard(const std::string& device_path) {
     if (!device_path.empty()) {
         kbd_fd = open(device_path.c_str(), O_RDONLY | O_NONBLOCK);
         std::cout << "[DEBUG][DiscoverKeyboard] open(" << device_path << ") returned fd=" << kbd_fd << std::endl;
+        if (kbd_fd >= 0) {
+            int flags = fcntl(kbd_fd, F_GETFL);
+            std::cout << "[DEBUG][DiscoverKeyboard] kbd_fd F_GETFL flags=" << flags << std::endl;
+        }
         if (kbd_fd < 0) {
             std::cerr << "Failed to open keyboard device: " << device_path << ", errno=" << errno << std::endl;
             return false;
@@ -134,6 +138,10 @@ bool Input::DiscoverMouse(const std::string& device_path) {
     if (!device_path.empty()) {
         mouse_fd = open(device_path.c_str(), O_RDONLY | O_NONBLOCK);
         std::cout << "[DEBUG][DiscoverMouse] open(" << device_path << ") returned fd=" << mouse_fd << std::endl;
+        if (mouse_fd >= 0) {
+            int flags = fcntl(mouse_fd, F_GETFL);
+            std::cout << "[DEBUG][DiscoverMouse] mouse_fd F_GETFL flags=" << flags << std::endl;
+        }
         if (mouse_fd < 0) {
             std::cerr << "Failed to open mouse device: " << device_path << ", errno=" << errno << std::endl;
             return false;
@@ -271,7 +279,7 @@ void Input::Read(int& mouse_dx) {
     int timeout = 10; // ms
     std::cout << "[DEBUG][Input::Read] Before poll, nfds=" << nfds << ", running=" << running << std::endl;
     int ret = (nfds > 0) ? poll(pfds, nfds, timeout) : 0;
-    std::cout << "[DEBUG][Input::Read] After poll, ret=" << ret << ", running=" << running << std::endl;
+    std::cout << "[DEBUG][Input::Read] After poll, ret=" << ret << ", errno=" << errno << ", running=" << running << std::endl;
     for (int i = 0; i < nfds; ++i) {
         std::cout << "[DEBUG][Input::Read] pfds[" << i << "]: fd=" << pfds[i].fd << ", revents=" << pfds[i].revents << std::endl;
     }
