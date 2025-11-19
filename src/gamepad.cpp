@@ -15,16 +15,16 @@
 GamepadDevice::GamepadDevice() 
         : fd(-1), use_uhid(false), use_gadget(false), gadget_running(false),
             enabled(false), steering(0), throttle(0.0f), brake(0.0f), clutch(0.0f), dpad_x(0), dpad_y(0),
-            // Clutch axis update (ramp like throttle/brake)
-            void GamepadDevice::UpdateClutch(bool pressed) {
-                std::lock_guard<std::mutex> lock(state_mutex);
-                if (pressed) {
-                    clutch = (clutch + 3.0f > 100.0f) ? 100.0f : clutch + 3.0f;
-                } else {
-                    clutch = (clutch - 3.0f < 0.0f) ? 0.0f : clutch - 3.0f;
-                }
-            }
-            ffb_force(0), ffb_autocenter(0), ffb_enabled(true), user_torque(0.0f) {
+            ffb_force(0), ffb_autocenter(0), ffb_enabled(true), user_torque(0.0f) {}
+
+// Clutch axis update (ramp like throttle/brake)
+void GamepadDevice::UpdateClutch(bool pressed) {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    if (pressed) {
+        clutch = (clutch + 3.0f > 100.0f) ? 100.0f : clutch + 3.0f;
+    } else {
+        clutch = (clutch - 3.0f < 0.0f) ? 0.0f : clutch - 3.0f;
+    }
 }
 
 GamepadDevice::~GamepadDevice() {
