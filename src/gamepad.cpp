@@ -1088,10 +1088,19 @@ void GamepadDevice::FFBUpdateThread() {
         filtered_ffb += (target_force - filtered_ffb) * alpha;
 
         const float offset_limit = 22000.0f;
-        float next_offset = filtered_ffb;
-        if (next_offset > offset_limit) next_offset = offset_limit;
-        if (next_offset < -offset_limit) next_offset = -offset_limit;
-        ffb_offset = next_offset;
+        float target_offset = filtered_ffb;
+        if (target_offset > offset_limit) target_offset = offset_limit;
+        if (target_offset < -offset_limit) target_offset = -offset_limit;
+
+        const float slew_rate = 90000.0f; // Units per second the FFB can move the wheel
+        float max_step = slew_rate * dt;
+        if (max_step < 120.0f) {
+            max_step = 120.0f;
+        }
+        float delta = target_offset - ffb_offset;
+        if (delta > max_step) delta = max_step;
+        if (delta < -max_step) delta = -max_step;
+        ffb_offset += delta;
 
         bool steering_changed = ApplySteeringLocked();
         lock.unlock();
