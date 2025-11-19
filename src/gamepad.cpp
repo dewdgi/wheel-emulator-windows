@@ -563,8 +563,13 @@ void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
     bool changed = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex);
-        const float gain = static_cast<float>(sensitivity) * 70.0f;
-        user_steering += delta * gain;
+        constexpr float base_gain = 0.05f;  // Matches legacy feel after removing physics integrator
+        const float gain = static_cast<float>(sensitivity) * base_gain;
+        const float max_step = 2000.0f;
+        float step = delta * gain;
+        if (step > max_step) step = max_step;
+        if (step < -max_step) step = -max_step;
+        user_steering += step;
         const float max_angle = 32767.0f;
         if (user_steering > max_angle) user_steering = max_angle;
         if (user_steering < -max_angle) user_steering = -max_angle;
