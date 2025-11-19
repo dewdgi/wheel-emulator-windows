@@ -68,10 +68,14 @@ bool GamepadDevice::IsEnabled() {
 
 // Toggle enabled state atomically (mutex-protected)
 void GamepadDevice::ToggleEnabled(Input& input) {
-    std::lock_guard<std::mutex> lock(state_mutex);
-    enabled = !enabled;
-    input.Grab(enabled);
-    if (enabled) {
+    bool now_enabled;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        enabled = !enabled;
+        now_enabled = enabled;
+    }
+    input.Grab(now_enabled);
+    if (now_enabled) {
         std::cout << "Emulation ENABLED" << std::endl;
     } else {
         std::cout << "Emulation DISABLED" << std::endl;

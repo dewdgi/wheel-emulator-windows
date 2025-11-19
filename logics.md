@@ -790,6 +790,9 @@ while (running) {
 
 `state_mutex` is the single writer/read lock for every shared signal (`steering`, `velocity`, `user_torque`, pedal ramps, button bitfields, and the `enabled` latch that drives grabbing). Any thread that touches those fields must hold the mutex, which guarantees the HID report is assembled from a single coherent snapshot and that the toggle edge cannot be torn by a concurrent physics update.
 
+**As of Nov 2025:**
+- The `ToggleEnabled` method in `GamepadDevice` now toggles the `enabled` state under the mutex, but calls `input.Grab()` outside the lock. This prevents deadlocks if `input.Grab()` blocks or takes time, ensuring the main loop remains responsive to Ctrl+M and Ctrl+C.
+
 ### Locked SendState Paths
 
 ```cpp

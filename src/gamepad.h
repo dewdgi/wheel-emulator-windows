@@ -44,7 +44,7 @@ public:
     // Process UHID events (must be called regularly when using UHID)
     void ProcessUHIDEvents();
 
-    // Atomic enable/disable and grab/ungrab, protected by mutex
+    // Atomic enable/disable and grab/ungrab, protected by mutex (grab is now outside lock)
     void SetEnabled(bool enable, Input& input);
     bool IsEnabled();
     void ToggleEnabled(Input& input);
