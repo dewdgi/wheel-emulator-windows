@@ -251,11 +251,13 @@ void Input::Read(int& mouse_dx) {
     struct pollfd pfds[2];
     int nfds = 0;
     if (kbd_fd >= 0) {
+        std::cout << "[DEBUG][Input::Read] kbd_fd valid, fd=" << kbd_fd << std::endl;
         pfds[nfds].fd = kbd_fd;
         pfds[nfds].events = POLLIN;
         ++nfds;
     }
     if (mouse_fd >= 0) {
+        std::cout << "[DEBUG][Input::Read] mouse_fd valid, fd=" << mouse_fd << std::endl;
         pfds[nfds].fd = mouse_fd;
         pfds[nfds].events = POLLIN;
         ++nfds;
@@ -269,14 +271,17 @@ void Input::Read(int& mouse_dx) {
         if (kbd_fd >= 0 && (pfds[0].revents & POLLIN)) {
             std::cout << "[DEBUG][Input::Read] Keyboard POLLIN, running=" << running << std::endl;
             while (true) {
+                std::cout << "[DEBUG][Input::Read] Keyboard about to read, running=" << running << std::endl;
                 ssize_t n = read(kbd_fd, &ev, sizeof(ev));
                 std::cout << "[DEBUG][Input::Read] Keyboard read n=" << n << ", running=" << running << std::endl;
                 if (n > 0) {
+                    std::cout << "[DEBUG][Input::Read] Keyboard event type=" << ev.type << ", code=" << ev.code << ", value=" << ev.value << std::endl;
                     if (ev.type == EV_KEY && ev.code < KEY_MAX) {
                         keys[ev.code] = (ev.value != 0);
-                        std::cout << "[DEBUG] Key event: code=" << ev.code << ", value=" << ev.value << std::endl;
+                        std::cout << "[DEBUG][Input::Read] Key event: code=" << ev.code << ", value=" << ev.value << std::endl;
                     }
                 } else {
+                    std::cout << "[DEBUG][Input::Read] Keyboard break, n=" << n << std::endl;
                     break;
                 }
             }
@@ -285,14 +290,17 @@ void Input::Read(int& mouse_dx) {
         if (mouse_fd >= 0 && ((nfds == 2 && (pfds[1].revents & POLLIN)) || (nfds == 1 && (pfds[0].fd == mouse_fd && (pfds[0].revents & POLLIN))))) {
             std::cout << "[DEBUG][Input::Read] Mouse POLLIN, running=" << running << std::endl;
             while (true) {
+                std::cout << "[DEBUG][Input::Read] Mouse about to read, running=" << running << std::endl;
                 ssize_t n = read(mouse_fd, &ev, sizeof(ev));
                 std::cout << "[DEBUG][Input::Read] Mouse read n=" << n << ", running=" << running << std::endl;
                 if (n > 0) {
+                    std::cout << "[DEBUG][Input::Read] Mouse event type=" << ev.type << ", code=" << ev.code << ", value=" << ev.value << std::endl;
                     if (ev.type == EV_REL && ev.code == REL_X) {
                         mouse_dx += ev.value;
-                        std::cout << "[DEBUG] Mouse event: dx=" << ev.value << std::endl;
+                        std::cout << "[DEBUG][Input::Read] Mouse event: dx=" << ev.value << std::endl;
                     }
                 } else {
+                    std::cout << "[DEBUG][Input::Read] Mouse break, n=" << n << std::endl;
                     break;
                 }
             }

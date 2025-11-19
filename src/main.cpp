@@ -261,60 +261,54 @@ int main(int argc, char* argv[]) {
     
     // Discover input devices
     Input input;
-    if (!input.DiscoverKeyboard(config.keyboard_device)) {
-        std::cerr << "Failed to discover keyboard" << std::endl;
-        return 1;
-    }
-    
-    if (!input.DiscoverMouse(config.mouse_device)) {
-        std::cerr << "Failed to discover mouse" << std::endl;
-        return 1;
-    }
-    std::cout << std::endl;
-
-    std::cout << "Using configured keyboard: " << config.keyboard_device << std::endl;
-    std::cout << "Using configured mouse: " << config.mouse_device << std::endl;
-    std::cout << std::endl;
-
-    std::cout << "Emulation is OFF. Press Ctrl+M to enable." << std::endl;
-    std::cout << std::endl;
-
-    // Main loop
+    int loop_counter = 0;
     while (true) {
-        std::cout << "[DEBUG][main] top of loop, running=" << running << std::endl;
+        std::cout << "[DEBUG][main] LOOP START, count=" << loop_counter << ", running=" << running << std::endl;
         if (!running) {
-            std::cout << "[DEBUG][main] running is false, breaking main loop" << std::endl;
+            std::cout << "[DEBUG][main] running is false, breaking main loop at top, count=" << loop_counter << std::endl;
             break;
         }
         int mouse_dx = 0;
-        std::cout << "[DEBUG][main] calling input.Read()" << std::endl;
+        std::cout << "[DEBUG][main] calling input.Read(), count=" << loop_counter << std::endl;
         input.Read(mouse_dx);
-        std::cout << "[DEBUG][main] after input.Read, running=" << running << std::endl;
+        std::cout << "[DEBUG][main] after input.Read, running=" << running << ", count=" << loop_counter << std::endl;
         bool toggle = input.CheckToggle();
+        std::cout << "[DEBUG][main] after CheckToggle, toggle=" << toggle << ", running=" << running << ", count=" << loop_counter << std::endl;
         bool enabled = gamepad.IsEnabled();
-        std::cout << "[DEBUG][main] running=" << running << ", toggle=" << toggle << ", enabled=" << enabled << std::endl;
+        std::cout << "[DEBUG][main] after IsEnabled, enabled=" << enabled << ", running=" << running << ", count=" << loop_counter << std::endl;
         if (toggle) {
-            std::cout << "[DEBUG][main] Toggle detected!" << std::endl;
+            std::cout << "[DEBUG][main] Toggle detected! count=" << loop_counter << std::endl;
             gamepad.ToggleEnabled(input);
+            std::cout << "[DEBUG][main] after ToggleEnabled, running=" << running << ", count=" << loop_counter << std::endl;
         }
         if (enabled) {
+            std::cout << "[DEBUG][main] updating steering, running=" << running << ", count=" << loop_counter << std::endl;
             gamepad.UpdateSteering(mouse_dx, config.sensitivity);
+            std::cout << "[DEBUG][main] updating throttle, running=" << running << ", count=" << loop_counter << std::endl;
             gamepad.UpdateThrottle(input.IsKeyPressed(KEY_W));
+            std::cout << "[DEBUG][main] updating brake, running=" << running << ", count=" << loop_counter << std::endl;
             gamepad.UpdateBrake(input.IsKeyPressed(KEY_S));
+            std::cout << "[DEBUG][main] updating clutch, running=" << running << ", count=" << loop_counter << std::endl;
             gamepad.UpdateClutch(input.IsKeyPressed(KEY_A));
+            std::cout << "[DEBUG][main] updating buttons, running=" << running << ", count=" << loop_counter << std::endl;
             gamepad.UpdateButtons(input);
+            std::cout << "[DEBUG][main] updating dpad, running=" << running << ", count=" << loop_counter << std::endl;
             gamepad.UpdateDPad(input);
+            std::cout << "[DEBUG][main] sending state, running=" << running << ", count=" << loop_counter << std::endl;
             gamepad.SendState();
         }
+        std::cout << "[DEBUG][main] processing UHID events, running=" << running << ", count=" << loop_counter << std::endl;
         gamepad.ProcessUHIDEvents();
-        usleep(10000); // Sleep 10ms to avoid busy-waiting
-        std::cout << "[DEBUG][main] main loop slept 10ms, running=" << running << std::endl;
+        std::cout << "[DEBUG][main] before sleep, running=" << running << ", count=" << loop_counter << std::endl;
+        usleep(10000);
+        std::cout << "[DEBUG][main] after sleep, running=" << running << ", count=" << loop_counter << std::endl;
         if (!running) {
-            std::cout << "[DEBUG][main] running is false after sleep, breaking main loop" << std::endl;
+            std::cout << "[DEBUG][main] running is false after sleep, breaking main loop, count=" << loop_counter << std::endl;
             break;
         }
+        ++loop_counter;
     }
-    std::cout << "[DEBUG] Main loop exited, running=" << running << std::endl;
+    std::cout << "[DEBUG][main] Main loop exited, running=" << running << std::endl;
     input.Grab(false);
     std::cout << "Goodbye!" << std::endl;
     return 0;
