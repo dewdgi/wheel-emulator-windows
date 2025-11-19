@@ -49,18 +49,6 @@ bool Input::DiscoverKeyboard(const std::string& device_path) {
             }
             int grab_result = ioctl(kbd_fd, EVIOCGRAB, 0);
             std::cout << "[DEBUG][DiscoverKeyboard] kbd_fd EVIOCGRAB(0) result=" << grab_result << ", errno=" << errno << std::endl;
-
-            // TEMP: Try a blocking read loop for diagnostics
-            std::cout << "[DEBUG][DiscoverKeyboard] Starting direct blocking read test (press keys)..." << std::endl;
-            for (int i = 0; i < 10; ++i) {
-                struct input_event ev;
-                ssize_t n = read(kbd_fd, &ev, sizeof(ev));
-                std::cout << "[DEBUG][DiscoverKeyboard] direct read n=" << n << ", errno=" << errno;
-                if (n == sizeof(ev)) {
-                    std::cout << ", type=" << ev.type << ", code=" << ev.code << ", value=" << ev.value;
-                }
-                std::cout << std::endl;
-            }
             unsigned long evbit[8] = {0};
             if (ioctl(kbd_fd, EVIOCGBIT(0, sizeof(evbit)), evbit) >= 0) {
                 std::cout << "[DEBUG][DiscoverKeyboard] Supported event types:";
@@ -181,18 +169,6 @@ bool Input::DiscoverMouse(const std::string& device_path) {
             }
             int grab_result = ioctl(mouse_fd, EVIOCGRAB, 0);
             std::cout << "[DEBUG][DiscoverMouse] mouse_fd EVIOCGRAB(0) result=" << grab_result << ", errno=" << errno << std::endl;
-
-            // TEMP: Try a blocking read loop for diagnostics
-            std::cout << "[DEBUG][DiscoverMouse] Starting direct blocking read test (move/click mouse)..." << std::endl;
-            for (int i = 0; i < 10; ++i) {
-                struct input_event ev;
-                ssize_t n = read(mouse_fd, &ev, sizeof(ev));
-                std::cout << "[DEBUG][DiscoverMouse] direct read n=" << n << ", errno=" << errno;
-                if (n == sizeof(ev)) {
-                    std::cout << ", type=" << ev.type << ", code=" << ev.code << ", value=" << ev.value;
-                }
-                std::cout << std::endl;
-            }
             unsigned long evbit[8] = {0};
             if (ioctl(mouse_fd, EVIOCGBIT(0, sizeof(evbit)), evbit) >= 0) {
                 std::cout << "[DEBUG][DiscoverMouse] Supported event types:";

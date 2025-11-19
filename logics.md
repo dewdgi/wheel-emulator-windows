@@ -1,159 +1,96 @@
 ---
 
-## Full Logical Structure: Loops, Conditionals, and Control Flow
 
+# Wheel HID Emulator: Up-to-date Logical Structure (as of November 2025)
 
-This section documents all logical constructs in the codebase, including every loop, conditional, function, and major control flow structure, for strict audit and traceability.
+## Main Components
 
-**Critical Note (as of Nov 2025):**
-All input reading and device I/O in the main loop (e.g., `input.Read()`) must be performed in non-blocking mode or be interruptible by signals (handle `EINTR`), to ensure the main loop remains responsive to both Ctrl+M (enable/disable) and Ctrl+C (shutdown). Blocking I/O without signal interruption can cause the main loop to hang, making the emulator unresponsive to user input and shutdown requests.
-
-**Thread Shutdown and Device Grabbing:**
-- All background threads (FFB, USB Gadget) must check both their own running flag and the global `running` flag, and use short poll/sleep intervals to ensure prompt shutdown on Ctrl+C or exit.
-- Device grabbing (`EVIOCGRAB`) must only be attempted on valid, open file descriptors. Always check file descriptor validity before grabbing or ungrabbing devices, and log errors if the descriptor is invalid or closed.
-
-### `src/main.cpp`
-
+### src/main.cpp
+- **Global:** `std::atomic<bool> running` (controls shutdown for all threads)
 - **Functions:**
+  - `signal_handler(int)` — sets `running = false` on SIGINT (Ctrl+C)
+  - `check_root()` — ensures root privileges
+  - `run_detection_mode()` — device detection logic (not detailed here)
   - `main()`
-    - `if (!check_root()) return 1;`
-    - `if (argc > 1 && strcmp(argv[1], "--detect") == 0) return run_detection_mode();`
-    - `if (!config.Load()) return 1;`
-    - `if (!gamepad.Create()) return 1;`
-    - `if (!input.DiscoverKeyboard(...)) return 1;`
-    - `if (!input.DiscoverMouse(...)) return 1;`
-    - `while (running)` (main loop)
-      - `input.Read(mouse_dx);`
-      - `if (input.CheckToggle()) gamepad.ToggleEnabled(input);`
-      - `if (gamepad.IsEnabled())` (enabled block)
-        - `gamepad.UpdateSteering(...)`
-        - `gamepad.UpdateThrottle(...)`
-        - `gamepad.UpdateBrake(...)`
-        - `gamepad.UpdateClutch(...)`
-        - `gamepad.UpdateButtons(...)`
-        - `gamepad.UpdateDPad(...)`
-        - `gamepad.SendState();`
-      - `gamepad.ProcessUHIDEvents();`
-      - `usleep(8000);`
-    - `input.Grab(false);` (cleanup)
-  - `signal_handler(int)`
-    - `if (signal == SIGINT) running = false;`
-  - `check_root()`
-    - `if (geteuid() != 0) return false;`
-  - `run_detection_mode()`
-    - `if (!dir) return ...;`
-    - `while ((entry = readdir(dir)) != nullptr)`
-    - `if (strncmp(entry->d_name, "event", 5) != 0) continue;`
-    - ... (device detection logic)
+    - Checks root, sets up signal handler
+    - Loads config
+    - Creates `GamepadDevice` (tries USB Gadget, then UHID, then uinput)
+    - Discovers keyboard and mouse via `Input`
+    - **Main loop:**
+      - While `running`:
+        - `input.Read(mouse_dx)` — non-blocking, updates key/mouse state
+        - `input.CheckToggle()` — edge-detects Ctrl+M, toggles enabled state
+        - If enabled:
+          - `gamepad.UpdateSteering(mouse_dx, config.sensitivity)`
+          - `gamepad.UpdateThrottle(input.IsKeyPressed(KEY_W))`
+          - `gamepad.UpdateBrake(input.IsKeyPressed(KEY_S))`
+          - `gamepad.UpdateClutch(input.IsKeyPressed(KEY_A))`
+          - `gamepad.UpdateButtons(input)`
+          - `gamepad.UpdateDPad(input)`
+          - `gamepad.SendState()`
+        - `gamepad.ProcessUHIDEvents()`
+        - `usleep(10000)`
+    - On exit: `input.Grab(false)`
 
-### `src/gamepad.cpp`/`.h`
-
+### src/gamepad.h / src/gamepad.cpp
 - **Class:** `GamepadDevice`
-  - **Functions:**
-    - `GamepadDevice()`, `~GamepadDevice()`
-      - `if (ffb_running) ...` (thread join)
-      - `if (gadget_running) ...` (thread join)
-      - `if (fd >= 0) ...` (device destroy)
-    - `SetEnabled(bool, Input&)`
-      - `if (enabled == enable) return;`
-      - `input.Grab(enable);`
-    - `IsEnabled()`
-    - `ToggleEnabled(Input&)`
-      - `enabled = !enabled;`
-      - `input.Grab(enabled);`
-    - `Create()`, `CreateUSBGadget()`, `CreateUHID()`, `CreateUInput()`
-      - `if (CreateUSBGadget()) return true;`
-      - `if (CreateUHID()) return true;`
-      - `if (fd < 0) return false;`
-      - `if (ret != 0) return false;`
-      - `while ((entry = readdir(dir)) != nullptr)`
-      - `if (strncmp(entry->d_name, "event", 5) == 0)`
-      - ... (USB gadget setup logic)
-    - `UpdateSteering(int, int)`
-      - `if (delta > -2 && delta < 2) delta = 0;`
-      - `user_torque = ...;`
-    - `UpdateThrottle(bool)`, `UpdateBrake(bool)`, `UpdateClutch(bool)`
-      - `if (pressed) ... else ...` (ramp logic)
-    - `UpdateButtons(const Input&)`
-      - `buttons["BTN_SOUTH"] = input.IsKeyPressed(KEY_Q);` (and all 26 buttons)
-    - `UpdateDPad(const Input&)`
-      - `int right = input.IsKeyPressed(KEY_RIGHT) ? 1 : 0;` (and similar for left, up, down)
-      - `dpad_x = right - left; dpad_y = down - up;`
-    - `SendState()`
-      - `if (fd < 0) return;`
-      - `if (use_uhid) { SendUHIDReport(); return; }`
-      - `std::lock_guard<std::mutex> lock(state_mutex);`
-    - `SendUHIDReport()`, `BuildHIDReport()`
-      - `std::lock_guard<std::mutex> lock(state_mutex);`
-    - `ProcessUHIDEvents()`
-      - `while (poll(...))` (event loop)
-      - `if (revents & POLLIN)`
-      - `if (revents & POLLOUT)`
-    - `ParseFFBCommand(const uint8_t*, size_t)`
-      - `switch (data[0]) { ... }` (FFB command parsing)
-    - `FFBUpdateThread()`
-      - `while (ffb_running)` (physics loop)
-        - `std::lock_guard<std::mutex> lock(state_mutex);`
-        - Physics: `velocity += ...; velocity *= ...; steering += ...;`
-        - `if (steering < -32768) steering = -32768;` (clamp)
-    - `USBGadgetPollingThread()`
-      - `while (gadget_running && running)` (polling loop)
-        - `poll(...);` (wait for host)
-        - `if (revents & POLLIN)`
-        - `if (revents & POLLOUT)`
+  - **State:**
+    - `fd` (device file descriptor)
+    - `use_uhid`, `use_gadget` (mode flags)
+    - `gadget_thread`, `gadget_running` (USB Gadget polling thread)
+    - `ffb_thread`, `ffb_running` (FFB physics thread)
+    - `state_mutex` (protects all state)
+    - `enabled`, `steering`, `throttle`, `brake`, `clutch`, `buttons`, `dpad_x`, `dpad_y`, `ffb_force`, `ffb_autocenter`, `ffb_enabled`, `user_torque`
+  - **Methods:**
+    - `Create()`, `CreateUSBGadget()`, `CreateUHID()`, `CreateUInput()` — device creation
+    - `UpdateSteering(int, int)`, `UpdateThrottle(bool)`, `UpdateBrake(bool)`, `UpdateClutch(bool)`, `UpdateButtons(const Input&)`, `UpdateDPad(const Input&)`
+    - `SendState()`, `SendUHIDReport()`, `BuildHIDReport()`, `SendNeutral()`
+    - `ProcessUHIDEvents()` — handles FFB and state requests
+    - `ParseFFBCommand(const uint8_t*, size_t)` — parses FFB commands
+    - `FFBUpdateThread()` — physics simulation, runs while `ffb_running && running`
+    - `USBGadgetPollingThread()` — USB comms, runs while `gadget_running && running`
+    - `SetEnabled(bool, Input&)`, `IsEnabled()`, `ToggleEnabled(Input&)` — enable/disable logic, grabs/ungrabs devices
+    - `EmitEvent(...)`, `ClampSteering(...)`
 
-### `src/input.cpp`/`.h`
-
+### src/input.h / src/input.cpp
 - **Class:** `Input`
-  - **Functions:**
-    - `Input()`, `~Input()`
-    - `DiscoverKeyboard(const std::string&)`
-      - `if (!device_path.empty()) ... else ...`
-      - `while ((entry = readdir(dir)) != nullptr)`
-      - `if (name_lower.find("keyboard") != std::string::npos)`
-      - `if (candidates.empty()) return false;`
-    - `DiscoverMouse(const std::string&)`
-      - `if (!device_path.empty()) ... else ...`
-      - `while ((entry = readdir(dir)) != nullptr)`
-      - `if (test_bit(REL_X, rel_bitmask)) ...`
-      - `if (candidates.empty()) return false;`
-    - `Read(int&)`
-      - `if (kbd_fd >= 0) while (read(...))` (keyboard event loop, **must be non-blocking or handle EINTR**)
-      - `if (mouse_fd >= 0) while (read(...))` (mouse event loop, **must be non-blocking or handle EINTR**)
-      - `if (ev.type == EV_KEY && ev.code < KEY_MAX)`
-      - `if (ev.type == EV_REL && ev.code == REL_X)`
-    - `CheckToggle()`
-      - `bool ctrl = keys[KEY_LEFTCTRL] || keys[KEY_RIGHTCTRL];`
-      - `bool m = keys[KEY_M];`
-      - `bool both = ctrl && m;`
-      - `if (both && !prev_toggle) toggled = true;`
-      - `prev_toggle = both;`
-      - `return toggled;`
-    - `Grab(bool)`
-      - `if (kbd_fd >= 0) ... if (ioctl(...) < 0) ... else ...`
-      - `if (mouse_fd >= 0) ... if (ioctl(...) < 0) ... else ...`
-    - `IsKeyPressed(int) const`
-      - `if (keycode >= 0 && keycode < KEY_MAX) return keys[keycode];`
+  - **State:**
+    - `kbd_fd`, `mouse_fd` (input device fds)
+    - `keys[KEY_MAX]` (current key state)
+    - `prev_toggle` (for Ctrl+M edge detection)
+  - **Methods:**
+    - `DiscoverKeyboard(const std::string&)`, `DiscoverMouse(const std::string&)` — device selection
+    - `Read(int&)` — non-blocking poll/read, updates `keys` and mouse delta
+    - `CheckToggle()` — returns true on Ctrl+M press edge
+    - `Grab(bool)` — grabs/ungrabs devices with `EVIOCGRAB`
+    - `IsKeyPressed(int) const` — returns key state
+    - `OpenDevice(...)`, `CloseDevice(...)`
 
-### `src/config.cpp`/`.h`
-
+### src/config.h / src/config.cpp
 - **Class:** `Config`
-  - **Functions:**
-    - `Load()`
-      - `if (LoadFromFile(...)) return true;`
-      - `SaveDefault(...);`
-    - `LoadFromFile(const char*)`
-      - `if (!file.is_open()) return false;`
-    - `ParseINI(const std::string&)`
-      - `while (std::getline(stream, line))` (line loop)
-      - `if (line.empty() || line[0] == '#' || line[0] == ';') continue;`
-      - `if (line[0] == '[' && line[line.length() - 1] == ']') ... continue;`
-      - `if (eq_pos == std::string::npos) continue;`
-      - `if (section == "devices") ... else if (section == "sensitivity") ... else if (section == "button_mapping") ...`
-    - `SaveDefault(const char*)`
-      - `if (!file.is_open()) return;`
-    - `UpdateDevices(const std::string&, const std::string&)`
-      - `if (!LoadFromFile(...)) return false;`
+  - **State:**
+    - `sensitivity`, `keyboard_device`, `mouse_device`, `button_map`
+  - **Methods:**
+    - `Load()`, `LoadFromFile(const char*)`, `SaveDefault(const char*)`, `UpdateDevices(const std::string&, const std::string&)`, `ParseINI(const std::string&)`
+
+### Threading Model
+- **Main thread:** runs main loop, handles input, state update, and report sending
+- **FFB Physics thread:** runs `FFBUpdateThread()` in `GamepadDevice` (125Hz)
+- **USB Gadget polling thread:** runs `USBGadgetPollingThread()` if in USB Gadget mode
+- **Mutex:** `state_mutex` in `GamepadDevice` protects all shared state
+
+### Device Grabbing and Shutdown
+- `input.Grab(bool)` is called on enable/disable and at shutdown
+- All device I/O is non-blocking or signal-interruptible
+- All threads check both their own running flag and global `running`
+
+### Control Flow Summary
+- Main loop: checks for Ctrl+M (toggle), Ctrl+C (shutdown), and updates state at 100Hz
+- All input and output is non-blocking, and all state is protected by mutexes where needed
+
+---
+
+**This document is now fully synchronized with the actual codebase as of November 2025.**
 
 ---
 
