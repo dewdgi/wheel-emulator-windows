@@ -1056,10 +1056,10 @@ void GamepadDevice::FFBUpdateThread() {
         std::cout << "[DEBUG][FFBUpdateThread] LOOP START, count=" << ffb_loop_counter << ", ffb_running=" << ffb_running << ", running=" << running << std::endl;
         if (!ffb_running) std::cout << "[DEBUG][FFBUpdateThread] ffb_running is false, breaking" << std::endl;
         if (!running) std::cout << "[DEBUG][FFBUpdateThread] running is false, breaking" << std::endl;
-        std::cout << "[DEBUG][FFBUpdateThread] before lock_guard, thread=" << std::this_thread::get_id() << std::endl;
+        std::cout << "[DEBUG][FFBUpdateThread] BEFORE lock_guard, thread=" << std::this_thread::get_id() << std::endl;
         try {
             std::lock_guard<std::mutex> lock(state_mutex);
-            std::cout << "[DEBUG][FFBUpdateThread] after lock_guard, thread=" << std::this_thread::get_id() << std::endl;
+            std::cout << "[DEBUG][FFBUpdateThread] AFTER lock_guard, thread=" << std::this_thread::get_id() << std::endl;
             std::cout << "[DEBUG][FFBUpdateThread] running after lock_guard = " << running << std::endl;
             if (!running) {
                 std::cout << "[DEBUG][FFBUpdateThread] running is false after lock_guard, breaking" << std::endl;
@@ -1089,6 +1089,9 @@ void GamepadDevice::FFBUpdateThread() {
             }
         } catch (const std::exception& e) {
             std::cout << "[DEBUG][FFBUpdateThread] EXCEPTION acquiring lock_guard: " << e.what() << std::endl;
+            break;
+        } catch (...) {
+            std::cout << "[DEBUG][FFBUpdateThread] UNKNOWN EXCEPTION acquiring lock_guard" << std::endl;
             break;
         }
         std::cout << "[DEBUG][FFBUpdateThread] after unlock_guard, thread=" << std::this_thread::get_id() << std::endl;
