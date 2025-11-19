@@ -32,18 +32,14 @@ void GamepadDevice::ShutdownThreads() {
 
 GamepadDevice::~GamepadDevice() {
     // Stop FFB thread
-    if (ffb_running) {
-        ffb_running = false;
-        if (ffb_thread.joinable()) {
-            ffb_thread.join();
-        }
+    ffb_running = false;
+    if (ffb_thread.joinable()) {
+        ffb_thread.join();
     }
     // Stop USB Gadget polling thread
-    if (gadget_running) {
-        gadget_running = false;
-        if (gadget_thread.joinable()) {
-            gadget_thread.join();
-        }
+    gadget_running = false;
+    if (gadget_thread.joinable()) {
+        gadget_thread.join();
     }
     // Close device file descriptor
     if (fd >= 0) {
