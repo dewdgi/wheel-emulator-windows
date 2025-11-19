@@ -1053,10 +1053,14 @@ void GamepadDevice::FFBUpdateThread() {
         int slept = 0;
         const int total_sleep = 8000; // 8ms
         const int step = 500; // 0.5ms
-        while (slept < total_sleep && ffb_running && running) {
+        while (slept < total_sleep) {
             std::cout << "[DEBUG][FFBUpdateThread] before usleep, slept=" << slept << ", ffb_running=" << ffb_running << ", running=" << running << std::endl;
             usleep(step);
             std::cout << "[DEBUG][FFBUpdateThread] after usleep, slept=" << slept << ", ffb_running=" << ffb_running << ", running=" << running << std::endl;
+            if (!ffb_running || !running) {
+                std::cout << "[DEBUG][FFBUpdateThread] breaking sleep early, ffb_running=" << ffb_running << ", running=" << running << std::endl;
+                break;
+            }
             slept += step;
         }
         ++ffb_loop_counter;
