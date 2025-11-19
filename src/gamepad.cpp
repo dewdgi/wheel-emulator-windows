@@ -1,3 +1,38 @@
+
+#include "gamepad.h"
+#include "input.h"
+#include <fcntl.h>
+#include <unistd.h>
+#include <poll.h>
+#include <cstring>
+#include <iostream>
+#include <dirent.h>
+#include <cstdlib>
+#include <linux/uhid.h>
+#include <linux/uinput.h>
+#include <linux/input-event-codes.h>
+
+GamepadDevice::~GamepadDevice() {
+    // Stop FFB thread
+    if (ffb_running) {
+        ffb_running = false;
+        if (ffb_thread.joinable()) {
+            ffb_thread.join();
+        }
+    }
+    // Stop USB Gadget polling thread
+    if (gadget_running) {
+        gadget_running = false;
+        if (gadget_thread.joinable()) {
+            gadget_thread.join();
+        }
+    }
+    // Close device file descriptor
+    if (fd >= 0) {
+        close(fd);
+        fd = -1;
+    }
+}
 #include "gamepad.h"
 #include "input.h"
 #include <fcntl.h>
@@ -20,58 +55,12 @@ GamepadDevice::GamepadDevice()
 // Clutch axis update (ramp like throttle/brake)
 void GamepadDevice::UpdateClutch(bool pressed) {
     std::lock_guard<std::mutex> lock(state_mutex);
-    while (gadget_running && running) {
-        // Wait for either read or write ready (with short timeout for fast shutdown)
-        int ret = poll(&pfd, 1, 20);  // 20ms timeout for responsiveness
-
-        if (!gadget_running || !running) break;
-
-        if (ret < 0) {
-            if (errno == EINTR) continue;
-            std::cerr << "USB Gadget poll error: " << strerror(errno) << std::endl;
-            break;
-        }
-
-        if (ret == 0) {
-            // Timeout - continue loop
-            continue;
-        }
-
-        // Check for FFB OUTPUT reports from host
-        if (pfd.revents & POLLIN) {
-            ssize_t bytes = read(fd, ffb_buffer, sizeof(ffb_buffer));
-            if (bytes == 7) {
-                // Valid FFB command received
-                ParseFFBCommand(ffb_buffer, bytes);
-            } else if (bytes < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                std::cerr << "USB Gadget read error: " << strerror(errno) << std::endl;
-            }
-        }
-
-        // Send INPUT report when host is ready to receive
-        if (pfd.revents & POLLOUT) {
-            std::vector<uint8_t> report;
-            {
-                std::lock_guard<std::mutex> lock(state_mutex);
-                report = BuildHIDReport();
-            }
-            ssize_t bytes = write(fd, report.data(), report.size());
-            if (bytes < 0) {
-                if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                    if (errno == ESHUTDOWN || errno == ECONNRESET) {
-                        std::cout << "USB Gadget device disconnected" << std::endl;
-                        break;
-                    }
-                    std::cerr << "USB Gadget write error: " << strerror(errno) << std::endl;
-                }
-            }
-        }
-
-        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
-            std::cerr << "USB Gadget poll error flags" << std::endl;
-            break;
-        }
+    if (pressed) {
+        clutch = (clutch + 3.0f > 100.0f) ? 100.0f : clutch + 3.0f;
+    } else {
+        clutch = (clutch - 3.0f < 0.0f) ? 0.0f : clutch - 3.0f;
     }
+}
 // Query enabled state (mutex-protected)
 bool GamepadDevice::IsEnabled() {
     std::lock_guard<std::mutex> lock(state_mutex);

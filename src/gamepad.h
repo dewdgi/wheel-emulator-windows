@@ -1,3 +1,12 @@
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+extern volatile bool running;
+
+#ifdef __cplusplus
+}
+#endif
 #ifndef GAMEPAD_H
 #define GAMEPAD_H
 

@@ -13,7 +13,7 @@
 #include "gamepad.h"
 
 // Global flag for clean shutdown
-static volatile bool running = true;
+volatile bool running = true;
 
 void signal_handler(int signal) {
     if (signal == SIGINT) {
