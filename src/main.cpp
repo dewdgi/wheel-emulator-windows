@@ -261,6 +261,12 @@ int main(int argc, char* argv[]) {
     
     // Discover input devices
     Input input;
+    std::cout << "[DEBUG][main] Calling input.DiscoverKeyboard with '" << config.keyboard_device << "'" << std::endl;
+    bool kbd_ok = input.DiscoverKeyboard(config.keyboard_device);
+    std::cout << "[DEBUG][main] input.DiscoverKeyboard returned " << kbd_ok << std::endl;
+    std::cout << "[DEBUG][main] Calling input.DiscoverMouse with '" << config.mouse_device << "'" << std::endl;
+    bool mouse_ok = input.DiscoverMouse(config.mouse_device);
+    std::cout << "[DEBUG][main] input.DiscoverMouse returned " << mouse_ok << std::endl;
     int loop_counter = 0;
     while (true) {
         std::cout << "[DEBUG][main] LOOP START, count=" << loop_counter << ", running=" << running << std::endl;
