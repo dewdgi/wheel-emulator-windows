@@ -1047,14 +1047,15 @@ void GamepadDevice::USBGadgetPollingThread() {
         }
         if (pfd.revents & POLLOUT) {
             std::cout << "[DEBUG][USBGadgetPollingThread] POLLOUT ready, count=" << gadget_loop_counter << std::endl;
-            // Best practice: never hold state_mutex during blocking I/O
-            std::vector<uint8_t> report;
+            // Robust: always work on a local copy of the HID report
+            std::vector<uint8_t> local_report;
             {
                 std::lock_guard<std::mutex> lock(state_mutex);
-                report = BuildHIDReport();
+                local_report = BuildHIDReport();
             }
+            // Now do I/O with no lock held
             std::cout << "[DEBUG][USBGadgetPollingThread] before write, fd=" << fd << ", count=" << gadget_loop_counter << std::endl;
-            ssize_t bytes = write(fd, report.data(), report.size());
+            ssize_t bytes = write(fd, local_report.data(), local_report.size());
             std::cout << "[DEBUG][USBGadgetPollingThread] after write, bytes=" << bytes << ", fd=" << fd << ", count=" << gadget_loop_counter << std::endl;
             if (!gadget_running || !running) {
                 std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop after write (post-check), count=" << gadget_loop_counter << std::endl;
