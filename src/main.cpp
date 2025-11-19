@@ -77,6 +77,8 @@ int main(int, char*[]) {
         // ...existing code...
     }
     std::cout << "[DEBUG][main] Main loop exited, running=" << running << std::endl;
+    // Signal threads to exit before destruction
+    gamepad.ShutdownThreads();
     input.Grab(false);
     std::cout << "[DEBUG][main] Goodbye!" << std::endl;
     return 0;

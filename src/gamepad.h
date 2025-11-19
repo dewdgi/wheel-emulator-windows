@@ -1,3 +1,5 @@
+    // Signal threads to exit
+    void ShutdownThreads();
 
 #ifndef GAMEPAD_H
 #define GAMEPAD_H
@@ -17,9 +19,12 @@ class Input; // Forward declaration
 
 
 class GamepadDevice {
+
 public:
     GamepadDevice();
     ~GamepadDevice();
+    // Signal threads to exit
+    void ShutdownThreads();
 
     // Create virtual Logitech G29 Racing Wheel
     bool Create();

@@ -12,6 +12,24 @@
 #include <linux/input-event-codes.h>
 #include <thread>
 
+void GamepadDevice::ShutdownThreads() {
+    ffb_running = false;
+    gadget_running = false;
+}
+#include "gamepad.h"
+#include "input.h"
+#include <fcntl.h>
+#include <unistd.h>
+#include <poll.h>
+#include <cstring>
+#include <iostream>
+#include <dirent.h>
+#include <cstdlib>
+#include <linux/uhid.h>
+#include <linux/uinput.h>
+#include <linux/input-event-codes.h>
+#include <thread>
+
 GamepadDevice::~GamepadDevice() {
     // Stop FFB thread
     if (ffb_running) {
