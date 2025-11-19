@@ -321,17 +321,68 @@ void Input::Read(int& mouse_dx) {
     mouse_dx = 0;
     struct input_event ev;
     std::cout << "[DEBUG][Input::Read] Entered, running=" << running << ", getuid()=" << getuid() << std::endl;
-    // Try a non-blocking read at startup to see if any event is available
+
+    // Poll both keyboard and mouse fds for available events (non-blocking, signal-safe)
+    struct pollfd pfds[2];
+    int nfds = 0;
     if (kbd_fd >= 0) {
-        ssize_t n = read(kbd_fd, &ev, sizeof(ev));
-        std::cout << "[DEBUG][Input::Read] Startup test read from kbd_fd, n=" << n << ", errno=" << errno << std::endl;
+        pfds[nfds].fd = kbd_fd;
+        pfds[nfds].events = POLLIN;
+        nfds++;
     }
     if (mouse_fd >= 0) {
-        ssize_t n = read(mouse_fd, &ev, sizeof(ev));
-        std::cout << "[DEBUG][Input::Read] Startup test read from mouse_fd, n=" << n << ", errno=" << errno << std::endl;
+        pfds[nfds].fd = mouse_fd;
+        pfds[nfds].events = POLLIN;
+        nfds++;
     }
-    // struct pollfd pfds[2]; // removed unused variable
-    // ...existing code for poll and event handling...
+    if (nfds == 0) return;
+
+    // Poll with zero timeout (non-blocking)
+    int pret = poll(pfds, nfds, 0);
+    if (pret < 0 && errno != EINTR) {
+        std::cerr << "[Input::Read] poll() error: " << strerror(errno) << std::endl;
+        return;
+    }
+
+    // Keyboard events
+    if (kbd_fd >= 0 && (pfds[0].revents & POLLIN)) {
+        while (true) {
+            ssize_t n = read(kbd_fd, &ev, sizeof(ev));
+            if (n == -1) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) break;
+                std::cerr << "[Input::Read] kbd_fd read error: " << strerror(errno) << std::endl;
+                break;
+            }
+            if (n == sizeof(ev)) {
+                if (ev.type == EV_KEY && ev.code < KEY_MAX) {
+                    keys[ev.code] = (ev.value != 0);
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    // Mouse events
+    int mouse_idx = (kbd_fd >= 0) ? 1 : 0;
+    if (mouse_fd >= 0 && (pfds[mouse_idx].revents & POLLIN)) {
+        while (true) {
+            ssize_t n = read(mouse_fd, &ev, sizeof(ev));
+            if (n == -1) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) break;
+                std::cerr << "[Input::Read] mouse_fd read error: " << strerror(errno) << std::endl;
+                break;
+            }
+            if (n == sizeof(ev)) {
+                if (ev.type == EV_REL && ev.code == REL_X) {
+                    mouse_dx += ev.value;
+                }
+                // (Optional: handle mouse buttons if needed)
+            } else {
+                break;
+            }
+        }
+    }
 }
 
 // --- Place these at the end of the file ---
