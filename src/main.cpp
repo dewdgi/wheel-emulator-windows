@@ -1,3 +1,5 @@
+// Forward declaration
+void notify_all_shutdown(Input& input, GamepadDevice& gamepad);
 
 #include <iostream>
 #include <atomic>
@@ -21,6 +23,9 @@ void signal_handler(int signal) {
         std::cout << "\n[DEBUG][signal_handler] Received Ctrl+C, shutting down..." << std::endl;
         running = false;
         std::cout << "[DEBUG][signal_handler] set running=" << running << std::endl;
+        // Best effort: try to wake all threads (input_cv, state_cv, ffb_cv)
+        // These will be no-ops if not yet constructed
+        // (input and gamepad are not accessible here, so rely on main loop to notify as well)
     }
 }
 
@@ -93,6 +98,8 @@ int main(int, char*[]) {
         }
         // ...main loop logic (react to input changes)...
     }
+    // On shutdown, notify all threads to wake up and exit
+    notify_all_shutdown(input, gamepad);
     std::cout << "[DEBUG][main] Main loop exited, running=" << running << std::endl;
     // Signal threads to exit before destruction
     std::cout << "[DEBUG][main] Calling gamepad.ShutdownThreads()" << std::endl;
@@ -102,4 +109,15 @@ int main(int, char*[]) {
     input.Grab(false);
     std::cout << "[DEBUG][main] Goodbye!" << std::endl;
     return 0;
+
+}
+
+void notify_all_shutdown(Input& input, GamepadDevice& gamepad) {
+    // Wake all threads waiting on condition variables
+    input.input_cv.notify_all();
+    {
+        std::lock_guard<std::mutex> lock(gamepad.state_mutex);
+        gamepad.state_cv.notify_all();
+        gamepad.ffb_cv.notify_all();
+    }
 }
