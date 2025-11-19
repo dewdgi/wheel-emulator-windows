@@ -1056,44 +1056,49 @@ void GamepadDevice::FFBUpdateThread() {
         std::cout << "[DEBUG][FFBUpdateThread] LOOP START, count=" << ffb_loop_counter << ", ffb_running=" << ffb_running << ", running=" << running << std::endl;
         if (!ffb_running) std::cout << "[DEBUG][FFBUpdateThread] ffb_running is false, breaking" << std::endl;
         if (!running) std::cout << "[DEBUG][FFBUpdateThread] running is false, breaking" << std::endl;
-        std::cout << "[DEBUG][FFBUpdateThread] BEFORE lock_guard, thread=" << std::this_thread::get_id() << std::endl;
-        try {
-            std::lock_guard<std::mutex> lock(state_mutex);
-            std::cout << "[DEBUG][FFBUpdateThread] AFTER lock_guard, thread=" << std::this_thread::get_id() << std::endl;
-            std::cout << "[DEBUG][FFBUpdateThread] running after lock_guard = " << running << std::endl;
-            if (!running) {
-                std::cout << "[DEBUG][FFBUpdateThread] running is false after lock_guard, breaking" << std::endl;
-                break;
-            }
-            if (!ffb_running) {
-                std::cout << "[DEBUG][FFBUpdateThread] ffb_running is false after lock_guard, breaking" << std::endl;
-                break;
-            }
-            float total_torque = 0.0f;
-            total_torque += static_cast<float>(ffb_force);
-            total_torque += user_torque;
-            if (ffb_autocenter > 0) {
-                float spring = -(steering * static_cast<float>(ffb_autocenter)) / 32768.0f;
-                total_torque += spring;
-            }
-            velocity += total_torque * 0.001f;
-            velocity *= 0.98f;
-            steering += velocity;
-            if (steering < -32768.0f) {
-                steering = -32768.0f;
-                velocity = 0.0f;
-            }
-            if (steering > 32767.0f) {
-                steering = 32767.0f;
-                velocity = 0.0f;
-            }
-        } catch (const std::exception& e) {
-            std::cout << "[DEBUG][FFBUpdateThread] EXCEPTION acquiring lock_guard: " << e.what() << std::endl;
-            break;
-        } catch (...) {
-            std::cout << "[DEBUG][FFBUpdateThread] UNKNOWN EXCEPTION acquiring lock_guard" << std::endl;
+        std::cout << "[DEBUG][FFBUpdateThread] BEFORE try_lock, thread=" << std::this_thread::get_id() << std::endl;
+        bool got_lock = false;
+        for (int try_count = 0; try_count < 20; ++try_count) { // Try for up to 10ms
+            if (!ffb_running || !running) break;
+            got_lock = state_mutex.try_lock();
+            if (got_lock) break;
+            usleep(500); // 0.5ms
+        }
+        if (!got_lock) {
+            std::cout << "[DEBUG][FFBUpdateThread] Could not acquire state_mutex, skipping this loop, ffb_running=" << ffb_running << ", running=" << running << std::endl;
+            continue;
+        }
+        std::cout << "[DEBUG][FFBUpdateThread] AFTER try_lock, thread=" << std::this_thread::get_id() << std::endl;
+        std::cout << "[DEBUG][FFBUpdateThread] running after try_lock = " << running << std::endl;
+        if (!running) {
+            std::cout << "[DEBUG][FFBUpdateThread] running is false after try_lock, breaking" << std::endl;
+            state_mutex.unlock();
             break;
         }
+        if (!ffb_running) {
+            std::cout << "[DEBUG][FFBUpdateThread] ffb_running is false after try_lock, breaking" << std::endl;
+            state_mutex.unlock();
+            break;
+        }
+        float total_torque = 0.0f;
+        total_torque += static_cast<float>(ffb_force);
+        total_torque += user_torque;
+        if (ffb_autocenter > 0) {
+            float spring = -(steering * static_cast<float>(ffb_autocenter)) / 32768.0f;
+            total_torque += spring;
+        }
+        velocity += total_torque * 0.001f;
+        velocity *= 0.98f;
+        steering += velocity;
+        if (steering < -32768.0f) {
+            steering = -32768.0f;
+            velocity = 0.0f;
+        }
+        if (steering > 32767.0f) {
+            steering = 32767.0f;
+            velocity = 0.0f;
+        }
+        state_mutex.unlock();
         std::cout << "[DEBUG][FFBUpdateThread] after unlock_guard, thread=" << std::this_thread::get_id() << std::endl;
         // Sleep in small increments to allow fast shutdown
         int slept = 0;
