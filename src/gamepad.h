@@ -3,6 +3,7 @@
 #ifndef GAMEPAD_H
 #define GAMEPAD_H
 #include <atomic>
+#include <condition_variable>
 
 extern std::atomic<bool> running;
 
@@ -68,6 +69,10 @@ private:
     std::thread ffb_thread;
     std::atomic<bool> ffb_running;
     std::mutex state_mutex;  // Protects state when thread is active
+    std::condition_variable state_cv; // Notifies polling thread of state changes or shutdown
+    std::condition_variable ffb_cv;   // Notifies FFB thread of state changes or shutdown
+    // Notifies the polling thread that state has changed
+    void NotifyStateChanged();
 
     // State
     bool enabled; // Emulation enabled/disabled, protected by state_mutex

@@ -74,18 +74,30 @@ int main(int, char*[]) {
     bool mouse_ok = input.DiscoverMouse(config.mouse_device);
     std::cout << "[DEBUG][main] input.DiscoverMouse returned " << mouse_ok << std::endl;
 
+    // Start input event thread
+    std::thread input_thread([&input]() {
+        while (running) {
+            input.Read();
+            input.NotifyInputChanged();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+
+    std::unique_lock<std::mutex> lock(input.input_mutex);
     bool printed_main_loop = false;
     while (running) {
+        input.input_cv.wait(lock);
         if (!printed_main_loop) {
             std::cout << "[DEBUG][main] Loop running, running=" << running.load() << std::endl;
             printed_main_loop = true;
         }
-        // ...main loop logic...
+        // ...main loop logic (react to input changes)...
     }
     std::cout << "[DEBUG][main] Main loop exited, running=" << running << std::endl;
     // Signal threads to exit before destruction
     std::cout << "[DEBUG][main] Calling gamepad.ShutdownThreads()" << std::endl;
     gamepad.ShutdownThreads();
+    if (input_thread.joinable()) input_thread.join();
     std::cout << "[DEBUG][main] Called input.Grab(false)" << std::endl;
     input.Grab(false);
     std::cout << "[DEBUG][main] Goodbye!" << std::endl;

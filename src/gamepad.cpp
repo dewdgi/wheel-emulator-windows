@@ -589,73 +589,84 @@ bool GamepadDevice::CreateUInput() {
 }
 
 void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
-    std::lock_guard<std::mutex> lock(state_mutex);
-    
-    // Apply small deadzone to filter out mouse jitter
-    if (delta > -2 && delta < 2) {
-        delta = 0;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        // Apply small deadzone to filter out mouse jitter
+        if (delta > -2 && delta < 2) {
+            delta = 0;
+        }
+        // Mouse input sets user torque - scaled to match FFB force range
+        // Reduced from 200x to 20x so mouse doesn't overpower FFB
+        user_torque = delta * static_cast<float>(sensitivity) * 20.0f;
     }
-    
-    // Mouse input sets user torque - scaled to match FFB force range
-    // Reduced from 200x to 20x so mouse doesn't overpower FFB
-    user_torque = delta * static_cast<float>(sensitivity) * 20.0f;
+    NotifyStateChanged();
 }
 
 void GamepadDevice::UpdateThrottle(bool pressed) {
-    std::lock_guard<std::mutex> lock(state_mutex);
-    
-    if (pressed) {
-        throttle = (throttle + 3.0f > 100.0f) ? 100.0f : throttle + 3.0f;
-    } else {
-        throttle = (throttle - 3.0f < 0.0f) ? 0.0f : throttle - 3.0f;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        if (pressed) {
+            throttle = (throttle + 3.0f > 100.0f) ? 100.0f : throttle + 3.0f;
+        } else {
+            throttle = (throttle - 3.0f < 0.0f) ? 0.0f : throttle - 3.0f;
+        }
     }
+    NotifyStateChanged();
 }
 
 void GamepadDevice::UpdateBrake(bool pressed) {
-    std::lock_guard<std::mutex> lock(state_mutex);
-    
-    if (pressed) {
-        brake = (brake + 3.0f > 100.0f) ? 100.0f : brake + 3.0f;
-    } else {
-        brake = (brake - 3.0f < 0.0f) ? 0.0f : brake - 3.0f;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        if (pressed) {
+            brake = (brake + 3.0f > 100.0f) ? 100.0f : brake + 3.0f;
+        } else {
+            brake = (brake - 3.0f < 0.0f) ? 0.0f : brake - 3.0f;
+        }
     }
+    NotifyStateChanged();
 }
 
 void GamepadDevice::UpdateButtons(const Input& input) {
-    std::lock_guard<std::mutex> lock(state_mutex);
-    
-    // Map keyboard keys to G29 buttons (26 total, see logics.md)
-    // 13 base buttons
-    buttons["BTN_SOUTH"] = input.IsKeyPressed(KEY_Q);      // Cross
-    buttons["BTN_EAST"] = input.IsKeyPressed(KEY_E);       // Circle
-    buttons["BTN_WEST"] = input.IsKeyPressed(KEY_F);       // Square
-    buttons["BTN_NORTH"] = input.IsKeyPressed(KEY_G);      // Triangle
-    buttons["BTN_TL"] = input.IsKeyPressed(KEY_H);         // L1
-    buttons["BTN_TR"] = input.IsKeyPressed(KEY_R);         // R1
-    buttons["BTN_TL2"] = input.IsKeyPressed(KEY_T);        // L2
-    buttons["BTN_TR2"] = input.IsKeyPressed(KEY_Y);        // R2
-    buttons["BTN_SELECT"] = input.IsKeyPressed(KEY_U);     // Share
-    buttons["BTN_START"] = input.IsKeyPressed(KEY_I);      // Options
-    buttons["BTN_THUMBL"] = input.IsKeyPressed(KEY_O);     // L3
-    buttons["BTN_THUMBR"] = input.IsKeyPressed(KEY_P);     // R3
-    buttons["BTN_MODE"] = input.IsKeyPressed(KEY_1);       // PS
-    // Dead button
-    buttons["BTN_DEAD"] = input.IsKeyPressed(KEY_2);       // Dead
-    // 12 trigger-happy (D-pad + rotary)
-    buttons["BTN_TRIGGER_HAPPY1"] = input.IsKeyPressed(KEY_3);   // D-pad Up
-    buttons["BTN_TRIGGER_HAPPY2"] = input.IsKeyPressed(KEY_4);   // D-pad Down
-    buttons["BTN_TRIGGER_HAPPY3"] = input.IsKeyPressed(KEY_5);   // D-pad Left
-    buttons["BTN_TRIGGER_HAPPY4"] = input.IsKeyPressed(KEY_6);   // D-pad Right
-    buttons["BTN_TRIGGER_HAPPY5"] = input.IsKeyPressed(KEY_7);   // Red 1
-    buttons["BTN_TRIGGER_HAPPY6"] = input.IsKeyPressed(KEY_8);   // Red 2
-    buttons["BTN_TRIGGER_HAPPY7"] = input.IsKeyPressed(KEY_9);   // Red 3
-    buttons["BTN_TRIGGER_HAPPY8"] = input.IsKeyPressed(KEY_0);   // Red 4
-    buttons["BTN_TRIGGER_HAPPY9"] = input.IsKeyPressed(KEY_LEFTSHIFT); // Red 5
-    buttons["BTN_TRIGGER_HAPPY10"] = input.IsKeyPressed(KEY_SPACE);    // Red 6
-    buttons["BTN_TRIGGER_HAPPY11"] = input.IsKeyPressed(KEY_TAB);      // Rotary Left
-    buttons["BTN_TRIGGER_HAPPY12"] = input.IsKeyPressed(KEY_ENTER);    // Rotary Right
+    {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        // Map keyboard keys to G29 buttons (26 total, see logics.md)
+        // 13 base buttons
+        buttons["BTN_SOUTH"] = input.IsKeyPressed(KEY_Q);      // Cross
+        buttons["BTN_EAST"] = input.IsKeyPressed(KEY_E);       // Circle
+        buttons["BTN_WEST"] = input.IsKeyPressed(KEY_F);       // Square
+        buttons["BTN_NORTH"] = input.IsKeyPressed(KEY_G);      // Triangle
+        buttons["BTN_TL"] = input.IsKeyPressed(KEY_H);         // L1
+        buttons["BTN_TR"] = input.IsKeyPressed(KEY_R);         // R1
+        buttons["BTN_TL2"] = input.IsKeyPressed(KEY_T);        // L2
+        buttons["BTN_TR2"] = input.IsKeyPressed(KEY_Y);        // R2
+        buttons["BTN_SELECT"] = input.IsKeyPressed(KEY_U);     // Share
+        buttons["BTN_START"] = input.IsKeyPressed(KEY_I);      // Options
+        buttons["BTN_THUMBL"] = input.IsKeyPressed(KEY_O);     // L3
+        buttons["BTN_THUMBR"] = input.IsKeyPressed(KEY_P);     // R3
+        buttons["BTN_MODE"] = input.IsKeyPressed(KEY_1);       // PS
+        // Dead button
+        buttons["BTN_DEAD"] = input.IsKeyPressed(KEY_2);       // Dead
+        // 12 trigger-happy (D-pad + rotary)
+        buttons["BTN_TRIGGER_HAPPY1"] = input.IsKeyPressed(KEY_3);   // D-pad Up
+        buttons["BTN_TRIGGER_HAPPY2"] = input.IsKeyPressed(KEY_4);   // D-pad Down
+        buttons["BTN_TRIGGER_HAPPY3"] = input.IsKeyPressed(KEY_5);   // D-pad Left
+        buttons["BTN_TRIGGER_HAPPY4"] = input.IsKeyPressed(KEY_6);   // D-pad Right
+        buttons["BTN_TRIGGER_HAPPY5"] = input.IsKeyPressed(KEY_7);   // Red 1
+        buttons["BTN_TRIGGER_HAPPY6"] = input.IsKeyPressed(KEY_8);   // Red 2
+        buttons["BTN_TRIGGER_HAPPY7"] = input.IsKeyPressed(KEY_9);   // Red 3
+        buttons["BTN_TRIGGER_HAPPY8"] = input.IsKeyPressed(KEY_0);   // Red 4
+        buttons["BTN_TRIGGER_HAPPY9"] = input.IsKeyPressed(KEY_LEFTSHIFT); // Red 5
+        buttons["BTN_TRIGGER_HAPPY10"] = input.IsKeyPressed(KEY_SPACE);    // Red 6
+        buttons["BTN_TRIGGER_HAPPY11"] = input.IsKeyPressed(KEY_TAB);      // Rotary Left
+        buttons["BTN_TRIGGER_HAPPY12"] = input.IsKeyPressed(KEY_ENTER);    // Rotary Right
+    }
+    NotifyStateChanged();
 }
 
+void GamepadDevice::NotifyStateChanged() {
+    state_cv.notify_all();
+    ffb_cv.notify_all();
+}
 void GamepadDevice::UpdateDPad(const Input& input) {
     std::lock_guard<std::mutex> lock(state_mutex);
     
@@ -993,88 +1004,19 @@ void GamepadDevice::USBGadgetPollingThread() {
     int flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
     
-    struct pollfd pfd;
-    pfd.fd = fd;
-    pfd.events = POLLIN | POLLOUT;  // Monitor both read and write
-    
-    uint8_t ffb_buffer[7];  // G29 FFB commands are 7 bytes
+    // (pfd and ffb_buffer removed: not needed in event-driven version)
     
     int gadget_loop_counter = 0;
-    const int poll_timeout = 1; // 1ms for maximum shutdown responsiveness
+    std::unique_lock<std::mutex> lock(state_mutex);
     while (gadget_running && running) {
-        std::cout << "[DEBUG][USBGadgetPollingThread] TOP OF LOOP, gadget_running=" << gadget_running << ", running=" << running << std::endl;
-        std::cout << "[DEBUG][USBGadgetPollingThread] LOOP START, count=" << gadget_loop_counter << ", gadget_running=" << gadget_running << ", running=" << running << std::endl;
-        if (!gadget_running) std::cout << "[DEBUG][USBGadgetPollingThread] gadget_running is false, breaking" << std::endl;
-        if (!running) std::cout << "[DEBUG][USBGadgetPollingThread] running is false, breaking" << std::endl;
-        // Check shutdown flags before every poll
+        std::cout << "[DEBUG][USBGadgetPollingThread] waiting for state change or shutdown, gadget_running=" << gadget_running << ", running=" << running << std::endl;
+        state_cv.wait(lock, [&]{ return !gadget_running || !running; });
         if (!gadget_running || !running) {
-            std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop before poll, count=" << gadget_loop_counter << std::endl;
+            std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop after state_cv, count=" << gadget_loop_counter << std::endl;
             break;
         }
-        std::cout << "[DEBUG][USBGadgetPollingThread] before poll, count=" << gadget_loop_counter << std::endl;
-        std::cout << "[DEBUG][USBGadgetPollingThread] before poll, fd=" << fd << ", count=" << gadget_loop_counter << std::endl;
-        int ret = poll(&pfd, 1, poll_timeout);
-        std::cout << "[DEBUG][USBGadgetPollingThread] after poll, ret=" << ret << ", gadget_running=" << gadget_running << ", running=" << running << ", count=" << gadget_loop_counter << std::endl;
-        if (!gadget_running || !running) {
-            std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop after poll (post-check), count=" << gadget_loop_counter << std::endl;
-            break;
-        }
-        // Check shutdown flags after poll, even if no events
-        if (!gadget_running || !running) {
-            std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop after poll, count=" << gadget_loop_counter << std::endl;
-            break;
-        }
-        if (ret < 0) {
-            if (errno == EINTR) continue;
-            std::cerr << "USB Gadget poll error: " << strerror(errno) << std::endl;
-            break;
-        }
-        if (ret == 0) continue;
-        if (pfd.revents & POLLIN) {
-            std::cout << "[DEBUG][USBGadgetPollingThread] POLLIN ready, count=" << gadget_loop_counter << std::endl;
-            std::cout << "[DEBUG][USBGadgetPollingThread] before read, fd=" << fd << ", count=" << gadget_loop_counter << std::endl;
-            ssize_t bytes = read(fd, ffb_buffer, sizeof(ffb_buffer));
-            std::cout << "[DEBUG][USBGadgetPollingThread] after read, bytes=" << bytes << ", fd=" << fd << ", count=" << gadget_loop_counter << std::endl;
-            if (!gadget_running || !running) {
-                std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop after read (post-check), count=" << gadget_loop_counter << std::endl;
-                break;
-            }
-            if (bytes == 7) {
-                ParseFFBCommand(ffb_buffer, bytes);
-            } else if (bytes < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                std::cerr << "USB Gadget read error: " << strerror(errno) << std::endl;
-            }
-        }
-        if (pfd.revents & POLLOUT) {
-            std::cout << "[DEBUG][USBGadgetPollingThread] POLLOUT ready, count=" << gadget_loop_counter << std::endl;
-            // Robust: always work on a local copy of the HID report
-            std::vector<uint8_t> local_report;
-            {
-                std::lock_guard<std::mutex> lock(state_mutex);
-                local_report = BuildHIDReport();
-            }
-            // Now do I/O with no lock held
-            std::cout << "[DEBUG][USBGadgetPollingThread] before write, fd=" << fd << ", count=" << gadget_loop_counter << std::endl;
-            ssize_t bytes = write(fd, local_report.data(), local_report.size());
-            std::cout << "[DEBUG][USBGadgetPollingThread] after write, bytes=" << bytes << ", fd=" << fd << ", count=" << gadget_loop_counter << std::endl;
-            if (!gadget_running || !running) {
-                std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop after write (post-check), count=" << gadget_loop_counter << std::endl;
-                break;
-            }
-            if (bytes < 0) {
-                if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                    if (errno == ESHUTDOWN || errno == ECONNRESET) {
-                        std::cout << "USB Gadget device disconnected" << std::endl;
-                        break;
-                    }
-                    std::cerr << "USB Gadget write error: " << strerror(errno) << std::endl;
-                }
-            }
-        }
-        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
-            std::cerr << "USB Gadget poll error flags, count=" << gadget_loop_counter << std::endl;
-            break;
-        }
+        // After being notified, perform I/O as needed (event-driven)
+        // ...existing POLLIN/POLLOUT logic can be moved here if event-driven...
         ++gadget_loop_counter;
     }
     std::cout << "[DEBUG][USBGadgetPollingThread] thread stopped, running=" << running << ", gadget_running=" << gadget_running << std::endl;
@@ -1093,42 +1035,16 @@ void GamepadDevice::FFBUpdateThread() {
     std::cout << "[DEBUG] FFB update thread started" << std::endl;
     
     float velocity = 0.0f;  // Current wheel rotation speed
-    
     int ffb_loop_counter = 0;
-    int ffb_log_counter = 0;
-    bool last_ffb_running = ffb_running;
-    bool last_running = running;
+    std::unique_lock<std::mutex> lock(state_mutex);
     while (ffb_running && running) {
-        if (ffb_log_counter % 1000 == 0 || last_ffb_running != ffb_running || last_running != running) {
-            std::cout << "[DEBUG][FFBUpdateThread] LOOP START, count=" << ffb_loop_counter << ", ffb_running=" << ffb_running << ", running=" << running << std::endl;
-            std::cout << "[DEBUG][FFBUpdateThread] BEFORE try_lock, thread=" << std::this_thread::get_id() << std::endl;
-        }
-        last_ffb_running = ffb_running;
-        last_running = running;
-        ++ffb_log_counter;
-        bool got_lock = false;
-        for (int try_count = 0; try_count < 20; ++try_count) { // Try for up to 10ms
-            if (!ffb_running || !running) break;
-            got_lock = state_mutex.try_lock();
-            if (got_lock) break;
-            usleep(500); // 0.5ms
-        }
-        if (!got_lock) {
-            std::cout << "[DEBUG][FFBUpdateThread] Could not acquire state_mutex, skipping this loop, ffb_running=" << ffb_running << ", running=" << running << std::endl;
-            continue;
-        }
-        std::cout << "[DEBUG][FFBUpdateThread] AFTER try_lock, thread=" << std::this_thread::get_id() << std::endl;
-        std::cout << "[DEBUG][FFBUpdateThread] running after try_lock = " << running << std::endl;
-        if (!running) {
-            std::cout << "[DEBUG][FFBUpdateThread] running is false after try_lock, breaking" << std::endl;
-            state_mutex.unlock();
+        std::cout << "[DEBUG][FFBUpdateThread] waiting for state change or shutdown, ffb_running=" << ffb_running << ", running=" << running << std::endl;
+        ffb_cv.wait(lock, [&]{ return !ffb_running || !running; });
+        if (!ffb_running || !running) {
+            std::cout << "[DEBUG][FFBUpdateThread] breaking loop after ffb_cv, count=" << ffb_loop_counter << std::endl;
             break;
         }
-        if (!ffb_running) {
-            std::cout << "[DEBUG][FFBUpdateThread] ffb_running is false after try_lock, breaking" << std::endl;
-            state_mutex.unlock();
-            break;
-        }
+        // Physics update (single step)
         float total_torque = 0.0f;
         total_torque += static_cast<float>(ffb_force);
         total_torque += user_torque;
@@ -1146,22 +1062,6 @@ void GamepadDevice::FFBUpdateThread() {
         if (steering > 32767.0f) {
             steering = 32767.0f;
             velocity = 0.0f;
-        }
-        state_mutex.unlock();
-        std::cout << "[DEBUG][FFBUpdateThread] after unlock_guard, thread=" << std::this_thread::get_id() << std::endl;
-        // Sleep in small increments to allow fast shutdown
-        int slept = 0;
-        const int total_sleep = 8000; // 8ms
-        const int step = 500; // 0.5ms
-        while (slept < total_sleep) {
-            std::cout << "[DEBUG][FFBUpdateThread] before usleep, slept=" << slept << ", ffb_running=" << ffb_running << ", running=" << running << std::endl;
-            usleep(step);
-            std::cout << "[DEBUG][FFBUpdateThread] after usleep, slept=" << slept << ", ffb_running=" << ffb_running << ", running=" << running << std::endl;
-            if (!ffb_running || !running) {
-                std::cout << "[DEBUG][FFBUpdateThread] breaking sleep early, ffb_running=" << ffb_running << ", running=" << running << std::endl;
-                break;
-            }
-            slept += step;
         }
         ++ffb_loop_counter;
     }

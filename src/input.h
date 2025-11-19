@@ -1,3 +1,6 @@
+
+#include <condition_variable>
+#include <mutex>
 #ifndef INPUT_H
 #define INPUT_H
 
@@ -5,6 +8,12 @@
 #include <string>
 
 class Input {
+    // Event-driven additions
+public:
+    std::condition_variable input_cv;
+    std::mutex input_mutex;
+    void NotifyInputChanged();
+    void Read();
 public:
     Input();
     ~Input();

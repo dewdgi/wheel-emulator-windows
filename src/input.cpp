@@ -17,6 +17,32 @@
 extern std::atomic<bool> running;
 #include <poll.h>
 
+void Input::Read() {
+    int dummy = 0;
+    Read(dummy);
+}
+void Input::NotifyInputChanged() {
+    input_cv.notify_all();
+}
+// Improved toggle: allow either Ctrl key, and tolerate quick presses
+#include "input.h"
+#include <iostream>
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cstring>
+#include <iostream>
+#include <vector>
+#include <algorithm>
+#include <dirent.h>
+#include <sys/ioctl.h>
+#include <linux/input-event-codes.h>
+#include <atomic>
+extern std::atomic<bool> running;
+#include <poll.h>
+
 // Bit manipulation macros for input device capabilities
 #define BITS_PER_LONG (sizeof(long) * 8)
 #define NBITS(x) ((((x)-1)/BITS_PER_LONG)+1)
