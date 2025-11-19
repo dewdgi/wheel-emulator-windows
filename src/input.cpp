@@ -13,6 +13,7 @@
 #include <dirent.h>
 #include <sys/ioctl.h>
 #include <linux/input-event-codes.h>
+#include <poll.h>
 
 // Bit manipulation macros for input device capabilities
 #define BITS_PER_LONG (sizeof(long) * 8)
@@ -244,46 +245,45 @@ bool Input::DiscoverMouse(const std::string& device_path) {
 void Input::Read(int& mouse_dx) {
     mouse_dx = 0;
     struct input_event ev;
-
-    // Read keyboard events (non-blocking, handle EINTR/EAGAIN)
+    // Use poll to wait for events with a timeout, so shutdown is responsive
+    struct pollfd pfds[2];
+    int nfds = 0;
     if (kbd_fd >= 0) {
-        while (true) {
-            ssize_t n = read(kbd_fd, &ev, sizeof(ev));
-            if (n > 0) {
-                if (ev.type == EV_KEY && ev.code < KEY_MAX) {
-                    keys[ev.code] = (ev.value != 0);
-                    std::cout << "[DEBUG] Key event: code=" << ev.code << ", value=" << ev.value << std::endl;
-                }
-            } else if (n == 0) {
-                break;
-            } else {
-                if (errno == EINTR) {
-                    continue;
-                } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    break;
+        pfds[nfds].fd = kbd_fd;
+        pfds[nfds].events = POLLIN;
+        ++nfds;
+    }
+    if (mouse_fd >= 0) {
+        pfds[nfds].fd = mouse_fd;
+        pfds[nfds].events = POLLIN;
+        ++nfds;
+    }
+    int timeout = 10; // ms
+    int ret = (nfds > 0) ? poll(pfds, nfds, timeout) : 0;
+    if (ret > 0) {
+        // Keyboard events
+        if (kbd_fd >= 0 && (pfds[0].revents & POLLIN)) {
+            while (true) {
+                ssize_t n = read(kbd_fd, &ev, sizeof(ev));
+                if (n > 0) {
+                    if (ev.type == EV_KEY && ev.code < KEY_MAX) {
+                        keys[ev.code] = (ev.value != 0);
+                        std::cout << "[DEBUG] Key event: code=" << ev.code << ", value=" << ev.value << std::endl;
+                    }
                 } else {
                     break;
                 }
             }
         }
-    }
-
-    // Read mouse events (non-blocking, handle EINTR/EAGAIN)
-    if (mouse_fd >= 0) {
-        while (true) {
-            ssize_t n = read(mouse_fd, &ev, sizeof(ev));
-            if (n > 0) {
-                if (ev.type == EV_REL && ev.code == REL_X) {
-                    mouse_dx += ev.value;
-                    std::cout << "[DEBUG] Mouse event: dx=" << ev.value << std::endl;
-                }
-            } else if (n == 0) {
-                break;
-            } else {
-                if (errno == EINTR) {
-                    continue;
-                } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    break;
+        // Mouse events
+        if (mouse_fd >= 0 && ((nfds == 2 && (pfds[1].revents & POLLIN)) || (nfds == 1 && (pfds[0].fd == mouse_fd && (pfds[0].revents & POLLIN))))) {
+            while (true) {
+                ssize_t n = read(mouse_fd, &ev, sizeof(ev));
+                if (n > 0) {
+                    if (ev.type == EV_REL && ev.code == REL_X) {
+                        mouse_dx += ev.value;
+                        std::cout << "[DEBUG] Mouse event: dx=" << ev.value << std::endl;
+                    }
                 } else {
                     break;
                 }
