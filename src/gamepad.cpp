@@ -1058,6 +1058,7 @@ void GamepadDevice::FFBUpdateThread() {
     // - Autocenter spring (wheel wants to return to center)
     
     float velocity = 0.0f;  // Current wheel rotation speed
+    float filtered_ffb = 0.0f; // Low-pass filtered FFB torque to keep motion smooth
     using clock = std::chrono::steady_clock;
     auto last = clock::now();
     std::unique_lock<std::mutex> lock(state_mutex);
@@ -1074,16 +1075,23 @@ void GamepadDevice::FFBUpdateThread() {
 
         float applied_impulse = user_torque;
         user_torque = 0.0f;
-        float total_torque = static_cast<float>(ffb_force) + applied_impulse;
+        float target_ffb = ShapeFFBTorque(static_cast<float>(ffb_force));
+        const float smoothing_rate = 28.0f; // Keeps constant feel without stepping on mouse input
+        float alpha = 1.0f - std::exp(-dt * smoothing_rate);
+        if (alpha < 0.0f) alpha = 0.0f;
+        if (alpha > 1.0f) alpha = 1.0f;
+        filtered_ffb += (target_ffb - filtered_ffb) * alpha;
+
+        float total_torque = filtered_ffb + applied_impulse;
         if (ffb_autocenter > 0) {
             float spring = -(steering * static_cast<float>(ffb_autocenter)) / 32768.0f;
             total_torque += spring;
         }
 
-        const float torque_scale = 25000.0f;
+        const float torque_scale = 28000.0f;
         velocity += (total_torque / torque_scale);
-        velocity *= 0.97f;
-        if (std::fabs(total_torque) < 25.0f && std::fabs(velocity) < 5.0f) {
+        velocity *= 0.95f;
+        if (std::fabs(total_torque) < 25.0f && std::fabs(velocity) < 4.0f) {
             velocity = 0.0f;
         }
         steering += velocity * (dt * 1000.0f);
@@ -1175,4 +1183,32 @@ void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
             // Unknown command - ignore
             break;
     }
+}
+
+float GamepadDevice::ShapeFFBTorque(float raw_force) const {
+    float abs_force = std::fabs(raw_force);
+    if (abs_force < 80.0f) {
+        // Keep microscopic oscillations alive but nearly imperceptible
+        return raw_force * (abs_force / 80.0f);
+    }
+
+    const float min_gain = 0.25f; // Light road feel while cruising
+    const float slip_knee = 4000.0f;
+    const float slip_full = 14000.0f;
+    float t = (abs_force - 80.0f) / (slip_full - 80.0f);
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    float slip_weight = t * t; // Emphasize larger forces non-linearly
+
+    float gain = min_gain;
+    if (abs_force > slip_knee) {
+        float heavy = (abs_force - slip_knee) / (slip_full - slip_knee);
+        if (heavy < 0.0f) heavy = 0.0f;
+        if (heavy > 1.0f) heavy = 1.0f;
+        gain = min_gain + (1.0f - min_gain) * heavy;
+    } else {
+        gain = min_gain + (slip_weight * (1.0f - min_gain));
+    }
+
+    return raw_force * gain;
 }

@@ -106,6 +106,7 @@ private:
     void ReadGadgetOutput();        // Gather host OUTPUT data (FFB) in gadget mode
     void ParseFFBCommand(const uint8_t* data, size_t size);  // Parse FFB OUTPUT reports
     void FFBUpdateThread();  // Thread that continuously applies FFB forces
+    float ShapeFFBTorque(float raw_force) const;
 
     // UInput methods (legacy)
     void EmitEvent(uint16_t type, uint16_t code, int32_t value);
