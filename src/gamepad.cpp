@@ -568,6 +568,9 @@ void GamepadDevice::SendState() {
         return;
     }
     
+    // Lock state mutex to prevent race with FFB thread
+    std::lock_guard<std::mutex> lock(state_mutex);
+    
     // UInput path (legacy)
     // Send steering wheel position - convert float to int16_t
     EmitEvent(EV_ABS, ABS_X, static_cast<int16_t>(steering));
@@ -626,6 +629,9 @@ std::vector<uint8_t> GamepadDevice::BuildHIDReport() {
     // Byte 6-7: Rz (Throttle) - 16-bit, little endian, inverted: 65535=rest, 0=pressed
     // Byte 8: HAT switch (4 bits) + padding (4 bits)
     // Byte 9-12: Buttons (25 bits) + padding (7 bits)
+    
+    // Lock state mutex to prevent race with FFB thread
+    std::lock_guard<std::mutex> lock(state_mutex);
     
     std::vector<uint8_t> report(13, 0);
     
