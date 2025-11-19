@@ -16,7 +16,6 @@ void notify_all_shutdown(Input& input, GamepadDevice& gamepad);
 #include <sys/ioctl.h>
 #include <linux/input.h>
 #include <linux/input-event-codes.h>
-#include <poll.h>
 #include <chrono>
 #include "config.h"
 #include "input.h"
@@ -72,6 +71,7 @@ int main(int, char*[]) {
     config.Load();
 
     GamepadDevice gamepad;
+    gamepad.SetFFBGain(config.ffb_gain);
     if (!gamepad.Create()) {
         std::cerr << "Failed to create virtual gamepad" << std::endl;
         return 1;
@@ -82,34 +82,9 @@ int main(int, char*[]) {
     input.DiscoverKeyboard(config.keyboard_device);
     input.DiscoverMouse(config.mouse_device);
 
-    if (input.get_kbd_fd() < 0 && input.get_mouse_fd() < 0) {
-        std::cerr << "No input devices available, exiting." << std::endl;
-        return 1;
-    }
-
     auto last_tick = std::chrono::steady_clock::now();
     while (running) {
-        struct pollfd pfds[2];
-        int nfds = 0;
-        if (input.get_kbd_fd() >= 0) {
-            pfds[nfds].fd = input.get_kbd_fd();
-            pfds[nfds].events = POLLIN;
-            nfds++;
-        }
-        if (input.get_mouse_fd() >= 0) {
-            pfds[nfds].fd = input.get_mouse_fd();
-            pfds[nfds].events = POLLIN;
-            nfds++;
-        }
-
-        int pret = poll(pfds, nfds, -1);
-        if (pret < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            std::cerr << "[main] poll() error: " << strerror(errno) << std::endl;
-            break;
-        }
+        input.WaitForEvents(8);
 
         int mouse_dx = 0;
         input.Read(mouse_dx);

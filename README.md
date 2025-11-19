@@ -11,7 +11,7 @@ Transform keyboard and mouse into a Logitech G29 Racing Wheel for racing games o
 - Arrow keys → D-Pad
 - Ctrl+M to toggle emulation on/off
 - 125 Hz update rate
-- Auto-detection mode for keyboard/mouse
+- Live keyboard/mouse hotplug detection
 
 ## Requirements
 
@@ -28,10 +28,6 @@ make
 ## Usage
 
 ```bash
-# First time: detect your keyboard and mouse
-sudo ./wheel-emulator --detect
-
-# Run emulator
 sudo ./wheel-emulator
 ```
 
@@ -59,14 +55,21 @@ Edit `/etc/wheel-emulator.conf`:
 
 ```ini
 [devices]
-keyboard=/dev/input/event6
-mouse=/dev/input/event11
+# Leave blank to auto-detect, or uncomment to pin a device
+# keyboard=/dev/input/event6
+# mouse=/dev/input/event11
+keyboard=
+mouse=
 
 [sensitivity]
 sensitivity=50
+
+[ffb]
+gain=1.0
 ```
 
-**Sensitivity:** 1-100 (default 50). Internally scaled by 0.2.
+**Sensitivity:** 1-100 (default 50). Internally scaled by 0.2.  
+**FFB gain:** Multiplier (0.1–4.0) applied to in-game force feedback.
 
 ## How It Works
 
@@ -98,7 +101,7 @@ sensitivity=50
 - Test: `jstest /dev/input/js0` or `evtest`
 
 **Wrong keyboard/mouse:**
-- Run: `sudo ./wheel-emulator --detect`
+- Unplug/replug or specify exact `/dev/input/eventX` paths in the config
 
 **Permission denied:**
 - Run with `sudo`

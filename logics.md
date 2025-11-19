@@ -10,16 +10,15 @@
 - **Functions:**
   - `signal_handler(int)` — sets `running = false` on SIGINT (Ctrl+C)
   - `check_root()` — ensures root privileges
-  - `run_detection_mode()` — device detection logic (not detailed here)
   - `main()`
     - Checks root, sets up signal handler
     - Loads config
     - Creates `GamepadDevice` (tries USB Gadget, then UHID, then uinput)
-    - Discovers keyboard and mouse via `Input`
+    - Seeds `Input` with optional manual overrides from config
     - **Main loop (event-driven):**
       - While `running`:
-        - `poll()` waits on keyboard/mouse fds (no sleeps)
-        - `input.Read(mouse_dx)` — non-blocking, updates key/mouse state
+        - `input.WaitForEvents(8)` multiplexes all tracked devices (hotplug aware)
+        - `input.Read(mouse_dx)` — drains every available device, updates key aggregator and mouse delta
         - `input.CheckToggle()` — edge-detects Ctrl+M, toggles enabled state
         - If enabled:
           - `gamepad.UpdateSteering(mouse_dx, config.sensitivity)`
@@ -55,16 +54,18 @@
 ### src/input.h / src/input.cpp
 - **Class:** `Input`
   - **State:**
-    - `kbd_fd`, `mouse_fd` (input device fds)
-    - `keys[KEY_MAX]` (current key state)
+    - `devices` (vector of all open `/dev/input/event*` descriptors with capabilities, per-device key shadows, manual flag)
+    - `keyboard_override`, `mouse_override` (optional config pins)
+    - `keys[KEY_MAX]` (aggregated key state) and `key_counts[KEY_MAX]` (per-key active device count)
     - `prev_toggle` (for Ctrl+M edge detection)
   - **Methods:**
-    - `DiscoverKeyboard(const std::string&)`, `DiscoverMouse(const std::string&)` — device selection
-    - `Read(int&)` — non-blocking poll/read, updates `keys` and mouse delta
+    - `DiscoverKeyboard(const std::string&)`, `DiscoverMouse(const std::string&)` — store overrides and trigger refresh
+    - `RefreshDevices()` — rescans `/dev/input` and hotplugs active devices (auto + manual)
+    - `WaitForEvents(int timeout_ms)` — polls all tracked descriptors (returns early on activity)
+    - `Read(int&)` — drains device queues, updates aggregated key/mouse state, drops disconnected devices
     - `CheckToggle()` — returns true on Ctrl+M press edge
-    - `Grab(bool)` — grabs/ungrabs devices with `EVIOCGRAB`
-    - `IsKeyPressed(int) const` — returns key state
-    - `OpenDevice(...)`, `CloseDevice(...)`
+    - `Grab(bool)` — grabs/ungrabs every tracked keyboard/mouse-capable fd via `EVIOCGRAB`
+    - `IsKeyPressed(int) const` — returns aggregated key state
 
 ### src/config.h / src/config.cpp
 - **Class:** `Config`
@@ -217,11 +218,11 @@ wheel-hid-emulator/
 - `main()`
   - `signal_handler()`
   - `check_root()`
-  - `run_detection_mode()`
   - `Config::Load()`
   - `GamepadDevice::Create()`
   - `Input::DiscoverKeyboard()`
   - `Input::DiscoverMouse()`
+  - `Input::WaitForEvents()`
   - `Input::Read()`
   - `Input::CheckToggle()`
   - `GamepadDevice::ToggleEnabled()`
@@ -260,6 +261,8 @@ wheel-hid-emulator/
 ### `src/input.cpp`/`.h`
 - `Input::DiscoverKeyboard()`
 - `Input::DiscoverMouse()`
+- `Input::RefreshDevices()`
+- `Input::WaitForEvents()`
 - `Input::Read()`
 - `Input::CheckToggle()`
 - `Input::Grab()`
@@ -395,7 +398,7 @@ Current (FFB physics improvements + race condition fix **applied**)
 - Physics-based steering simulation
 - 25 buttons + D-Pad + 4 axes (steering, brake, throttle, unused Y)
 - Configurable sensitivity and device paths
-- Interactive device detection mode (`--detect`) for user identification
+- Live keyboard/mouse hotplug detection (auto-discovery, no CLI wizard)
 
 ---
 
@@ -419,14 +422,11 @@ Current (FFB physics improvements + race condition fix **applied**)
 │                      FFB Physics Thread                      │
 │                        (125 Hz)                              │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │ 1. Calculate total_torque:                             │ │
-│  │    = ffb_force (from game)                             │ │
-│  │    + user_torque (from mouse)                          │ │
-│  │    + autocenter_spring (pull to center)                │ │
-│  │ 2. Update velocity: velocity += torque * 0.001         │ │
-│  │ 3. Apply damping: velocity *= 0.98                     │ │
-│  │ 4. Update position: steering += velocity               │ │
-│  │ 5. Clamp steering to [-32768, 32767]                   │ │
+│  │ 1. Shape/log filter ffb_force (kills chatter)          │ │
+│  │ 2. Add autocenter_spring from driver                   │ │
+│  │ 3. Scale by `[ffb] gain`                               │ │
+│  │ 4. Feed critically damped 2nd-order (offset/velocity)  │ │
+│  │ 5. Apply offset to steering & clamp to wheel limits    │ │
 │  └────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
                               ↕
@@ -451,13 +451,14 @@ Current (FFB physics improvements + race condition fix **applied**)
 **Purpose:** Read raw keyboard and mouse events from `/dev/input/eventX` devices.
 
 **Device Discovery:**
-- Priority-based auto-detection of keyboards and mice
-- Filters out unwanted devices (consumer control, touchpads, etc.)
-- Supports explicit device paths from config
-- Interactive detection mode (`--detect`) for user identification
+- Continuously rescans `/dev/input` (500ms cadence) for new `event*` files
+- Opens any device advertising keyboard (`EV_KEY` with alpha keys) and/or mouse (`REL_X`) capability
+- Accepts manual overrides from config (kept open even if auto-scan would skip them)
+- Hotplug-aware: newly attached keyboards/mice become usable as soon as they emit events; removed devices are dropped automatically
 
 **Key State Tracking:**
-- Maintains boolean array `keys[KEY_MAX]` for all key states
+- Maintains aggregated boolean array `keys[KEY_MAX]` plus per-key device reference counts
+- Each device stores its own `key_shadow` vector so unplugging clears any pressed keys (prevents stuck inputs)
 - Accumulates mouse X delta per frame (steering input)
 - Edge detection for Ctrl+M toggle (enable/disable emulation)
 
@@ -558,36 +559,42 @@ Application: Joystick (0x04)
 #### Physics Model
 
 **State Variables:**
-- `steering` (float): Current wheel position [-32768, 32767]
-- `velocity` (float): Current rotation speed (units per frame)
-- `ffb_force` (int16_t): Force from game [-32768, 32767]
-- `user_torque` (float): Force from mouse input
-- `ffb_autocenter` (int16_t): Spring force pulling to center
+- `ffb_force` (int16_t): Raw constant-force magnitude from the game
+- `ffb_autocenter` (int16_t): Spring coefficient requested by driver
+- `ffb_offset` (float): Current steering deflection contributed by FFB
+- `ffb_velocity` (float): Rate-of-change term for the second-order response
+- `ffb_gain` (float): User-configurable multiplier loaded from `[ffb] gain` in the config
+- `steering`, `user_steering`: Combined with `ffb_offset` inside `ApplySteeringLocked()`
 
 **Physics Loop (125 Hz):**
 ```cpp
-// 1. Calculate total torque
-total_torque = ffb_force + user_torque + autocenter_spring
+// 1. Shape game torque for road feel (nonlinear gain curve)
+commanded = ShapeFFBTorque(ffb_force)
 
-// 2. Torque → Velocity (F=ma)
-velocity += total_torque * 0.001f
+// 2. Low-pass filter to kill chatter (one-pole @ force_filter_hz)
+filtered += (commanded - filtered) * alpha
 
-// 3. Apply damping (friction)
-velocity *= 0.98f
+// 3. Add autocenter spring and apply user gain
+spring = -(steering * ffb_autocenter) / 32768.0f
+target = (filtered + spring) * ffb_gain
 
-// 4. Velocity → Position
-steering += velocity
+// 4. Critically damped 2nd-order response
+error = target - ffb_offset
+ffb_velocity += error * stiffness * dt
+ffb_velocity *= exp(-damping * dt)
+ffb_velocity = clamp(ffb_velocity, ±max_velocity)
+ffb_offset += ffb_velocity * dt (clamped to ±offset_limit)
 
-// 5. Clamp to limits
-steering = clamp(steering, -32768, 32767)
+// 5. Apply combined steering
+ApplySteeringLocked(user_steering + ffb_offset)
 ```
 
 **Key Properties:**
-- **Linear:** All forces add linearly, no exponential effects
-- **Damping:** 2% velocity loss per frame (98% retention)
-- **Responsive:** User can override FFB forces with mouse input
-- **Realistic:** Autocenter provides gentle pull to center
-- **Race-Free:** Mutex-protected state access
+- **Filtered:** High-frequency impulses from some games no longer cause audible wheel chatter
+- **Gain knob:** `[ffb] gain` in `/etc/wheel-emulator.conf` scales the final torque (0.1–4.0)
+- **Second-order smoothing:** Prevents oscillations while still tracking large forces quickly
+- **Spring-aware:** Autocenter from games stacks cleanly with user override and manual gain
+- **Race-Free:** Still guarded by `state_mutex`
 
 ---
 
@@ -645,7 +652,7 @@ brake_axis = 65535 - (brake * 655.35f)
 1. Check root privileges
 2. Load config from `/etc/wheel-emulator.conf`
 3. Create virtual G29 device (USB Gadget → UHID → uinput)
-4. Discover keyboard and mouse (config paths or auto-detect)
+4. Seed `Input` overrides (optional `keyboard=` / `mouse=`); hotplug scanning begins immediately
 5. Start FFB physics thread
 6. Start USB Gadget polling thread (if applicable)
 7. Begin in **disabled** state (devices not grabbed)
@@ -653,16 +660,19 @@ brake_axis = 65535 - (brake * 655.35f)
 **Main Loop (125 Hz / 8ms):**
 ```
 while (running) {
-    // 1. Read input events
-    input.Read(mouse_dx)
+  // 1. Wait for any device activity (8 ms max)
+  input.WaitForEvents(8);
+
+  // 2. Drain input events
+  input.Read(mouse_dx);
     
-    // 2. Check Ctrl+M toggle
+  // 3. Check Ctrl+M toggle
     if (input.CheckToggle()) {
         enabled = !enabled
         input.Grab(enabled)  // Exclusive access
     }
     
-    // 3. Update state (if enabled)
+  // 4. Update state (if enabled)
     if (enabled) {
         gamepad.UpdateSteering(mouse_dx, sensitivity)
         gamepad.UpdateThrottle(W_pressed)
@@ -673,11 +683,10 @@ while (running) {
         gamepad.SendState()  // Send HID report
     }
     
-    // 4. Process FFB events
+    // 5. Process FFB events
     gamepad.ProcessUHIDEvents()
     
-    // 5. Sleep to maintain 125Hz
-    usleep(8000)  // 8ms
+    // 6. Loop immediately; `WaitForEvents` bounds the cadence
 }
 ```
 
@@ -776,39 +785,33 @@ This structural contract removes the data race entirely and couples the grab/ung
 **Format:**
 ```ini
 [devices]
-keyboard=/dev/input/event6
-mouse=/dev/input/event11
+# keyboard=/dev/input/event6
+# mouse=/dev/input/event11
+keyboard=
+mouse=
 
 [sensitivity]
 sensitivity=50
+
+[ffb]
+gain=1.0
 ```
 
 **Parameters:**
-- `keyboard`: Explicit keyboard device path (optional, auto-detects if empty)
-- `mouse`: Explicit mouse device path (optional, auto-detects if empty)
-- `sensitivity`: Steering sensitivity 1-100 (default: 50)
-  - Higher = more responsive steering
-  - Multiplier: `sensitivity * 20.0f` for user torque
+- `keyboard` / `mouse`: Leave blank for auto (hotplug) or uncomment to pin specific `eventX`
+- `sensitivity`: Steering sensitivity 1-100 (default: 50) → multiplies mouse delta before feeding user torque
+- `gain`: Overall FFB strength multiplier (0.1–4.0, default 1.0) applied after filtering/autocenter
 
 ---
 
-## Device Detection Mode
+## Runtime Device Tracking
 
-**Usage:** `sudo ./wheel-emulator --detect`
-
-**Process:**
-1. Opens all `/dev/input/event*` devices
-2. Filters by capabilities (EV_KEY for keyboard, EV_REL for mouse)
-3. **Keyboard detection (5 seconds):**
-   - User types on keyboard
-   - Counts key press events per device
-   - Selects device with most events
-4. **Mouse detection (5 seconds):**
-   - User moves mouse
-   - Counts REL_X movement events per device
-   - Selects device with most events
-5. Automatically updates `/etc/wheel-emulator.conf`
-6. Ready to run normally
+- Every 500 ms the input layer scans `/dev/input` for `event*` nodes.
+- Devices stay open as long as they advertise the needed capabilities (`EV_KEY` with alphanumeric keys and/or `REL_X`).
+- Manual overrides from the config are reopened on demand and marked as `manual`, so they are never dropped by the auto-pruner.
+- All open descriptors participate in a single `poll()` (`WaitForEvents`) and are drained each frame.
+- When a device disappears (hot-unplug, suspend, etc.), its pressed keys are released automatically thanks to the per-device `key_shadow` + `key_counts` bookkeeping.
+- Connecting a new keyboard or mouse mid-session requires no restart; the next scan will pick it up and steering/keys start working as soon as events arrive.
 
 ---
 
@@ -844,45 +847,30 @@ sensitivity=50
 
 ## Physics Parameters
 
-### Torque Integration
-- **Coefficient:** 0.001
-- **Effect:** Converts torque to velocity change
-- **Tuning:** Higher = more responsive, lower = more inertia
+### Force Filter
+- **Cutoff:** ~38 Hz (single-pole low-pass)
+- **Effect:** Smooths harsh constant-force packets and prevents audible chatter
 
-### Damping Factor
-- **Value:** 0.98 (2% loss per frame)
-- **Effect:** Simulates friction, prevents runaway
-- **Tuning:** Higher (0.99) = less friction, lower (0.95) = more friction
+### Second-Order Response
+- **Stiffness:** 120.0f, **Damping:** 8.0f
+- **Behavior:** Critically damped; enforces ±22,000 offset limit and ±90,000 units/s velocity
+
+### FFB Gain
+- **Range:** 0.1 – 4.0 (configurable via `[ffb] gain`)
+- **Default:** 1.0 for parity with real G29 feel
 
 ### Mouse Scaling
 - **Formula:** `delta * sensitivity * 20.0f`
-- **Previous:** Was 200.0f (10x too strong)
-- **Fix:** Reduced to 20.0f to balance with FFB forces
-
-### Deadzone
-- **Value:** ±2 pixels
-- **Purpose:** Filter mouse sensor jitter
-- **Effect:** Tiny movements don't fight FFB
+- **Deadzone:** ±2 pixels to avoid sensor jitter in neutral steering
 
 ---
 
-## Build & Run
+### Build & Run
 
-### Build
 ```bash
 make clean
 make
-```
 
-### First Run (Device Detection)
-```bash
-sudo ./wheel-emulator --detect
-# Follow prompts: type on keyboard, move mouse
-# Config auto-updated
-```
-
-### Normal Run
-```bash
 sudo ./wheel-emulator
 # Press Ctrl+M to enable
 # Press Ctrl+M to disable

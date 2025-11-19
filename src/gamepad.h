@@ -53,6 +53,9 @@ private:
     void SendState();
     void SendNeutral();
 
+    // User-tunable settings
+    void SetFFBGain(float gain);
+
     // Process UHID events (must be called regularly when using UHID)
     void ProcessUHIDEvents();
 
@@ -84,6 +87,7 @@ private:
     float user_steering;
     float ffb_offset;
     float ffb_velocity;
+    float ffb_gain;
     float throttle;
     float brake;
     float clutch;

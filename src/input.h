@@ -1,11 +1,13 @@
 
-#include <condition_variable>
-#include <mutex>
 #ifndef INPUT_H
 #define INPUT_H
 
 #include <linux/input.h>
 #include <string>
+#include <vector>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
 
 class Input {
     // Event-driven additions
@@ -14,8 +16,7 @@ public:
     std::mutex input_mutex;
     void NotifyInputChanged();
     void Read();
-    int get_kbd_fd() const { return kbd_fd; }
-    int get_mouse_fd() const { return mouse_fd; }
+    bool WaitForEvents(int timeout_ms);
 public:
     Input();
     ~Input();
@@ -38,13 +39,35 @@ public:
     bool IsKeyPressed(int keycode) const;
 
 private:
-    int kbd_fd;
-    int mouse_fd;
+    struct DeviceHandle {
+        int fd = -1;
+        std::string path;
+        bool keyboard_capable = false;
+        bool mouse_capable = false;
+        bool manual = false;
+        std::chrono::steady_clock::time_point last_active;
+        std::vector<uint8_t> key_shadow;
+    };
+
+    std::vector<DeviceHandle> devices;
+    std::string keyboard_override;
+    std::string mouse_override;
+    std::chrono::steady_clock::time_point last_scan;
+    std::chrono::steady_clock::time_point last_keyboard_error;
+    std::chrono::steady_clock::time_point last_mouse_error;
     bool keys[KEY_MAX];
+    int key_counts[KEY_MAX];
     bool prev_toggle;
     
-    bool OpenDevice(const char* path, int& fd);
-    void CloseDevice(int& fd);
+    void RefreshDevices();
+    void EnsureManualDevice(const std::string& path, bool want_keyboard, bool want_mouse);
+    void CloseDevice(DeviceHandle& dev);
+    DeviceHandle* FindDevice(const std::string& path);
+    bool DrainDevice(DeviceHandle& dev, int& mouse_dx);
+    void ReleaseDeviceKeys(DeviceHandle& dev);
+    bool ShouldLogAgain(std::chrono::steady_clock::time_point& last_log);
+    bool WantsKeyboardAuto() const;
+    bool WantsMouseAuto() const;
 };
 
 #endif // INPUT_H

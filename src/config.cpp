@@ -19,10 +19,11 @@ bool Config::Load() {
     // Generate default config in /etc
     std::cout << "No config found, generating default at " << system_config << std::endl;
     SaveDefault(system_config);
-    std::cout << "Default config saved. Please edit " << system_config << " and run --detect to configure devices." << std::endl;
+    std::cout << "Default config saved. Devices will be auto-detected unless paths are specified in the config." << std::endl;
     
     // Set default values
     sensitivity = 50;
+    ffb_gain = 1.0f;
     
     // Set default button mappings (for reference - hardcoded in gamepad.cpp)
     button_map["KEY_Q"] = BTN_TRIGGER;
@@ -117,6 +118,13 @@ void Config::ParseINI(const std::string& content) {
                 if (val > 100) val = 100;
                 sensitivity = val;
             }
+        } else if (section == "ffb") {
+            if (key == "gain") {
+                float val = std::stof(value);
+                if (val < 0.1f) val = 0.1f;
+                if (val > 4.0f) val = 4.0f;
+                ffb_gain = val;
+            }
         } else if (section == "button_mapping") {
             // Map button code to key name (format: BUTTON=KEY)
             int button_code = -1;
@@ -161,16 +169,21 @@ void Config::SaveDefault(const char* path) {
     }
     
     file << "# Wheel Emulator Configuration\n";
-    file << "# Run with --detect flag to identify your devices\n\n";
+    file << "# Keyboard/mouse devices are auto-detected while running.\n";
+    file << "# Uncomment the paths below if you need to pin a specific device.\n\n";
     
     file << "[devices]\n";
-    file << "# Specify exact device paths (use --detect to find them)\n";
-    file << "# Leave empty for auto-detection\n";
+    file << "# keyboard=/dev/input/event6\n";
+    file << "# mouse=/dev/input/event11\n";
     file << "keyboard=\n";
     file << "mouse=\n\n";
     
     file << "[sensitivity]\n";
     file << "sensitivity=50\n\n";
+
+    file << "[ffb]\n";
+    file << "# Overall force feedback strength multiplier (0.1 - 4.0)\n";
+    file << "gain=1.0\n\n";
     
     file << "[controls]\n";
     file << "# Logitech G29 Racing Wheel Controls\n";

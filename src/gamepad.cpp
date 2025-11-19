@@ -76,8 +76,8 @@ GamepadDevice::~GamepadDevice() {
 
 
 GamepadDevice::GamepadDevice() 
-        : fd(-1), use_uhid(false), use_gadget(false), gadget_running(false),
-            enabled(false), steering(0), user_steering(0.0f), ffb_offset(0.0f), ffb_velocity(0.0f),
+    : fd(-1), use_uhid(false), use_gadget(false), gadget_running(false),
+        enabled(false), steering(0), user_steering(0.0f), ffb_offset(0.0f), ffb_velocity(0.0f), ffb_gain(1.0f),
             throttle(0.0f), brake(0.0f), clutch(0.0f), dpad_x(0), dpad_y(0),
             ffb_force(0), ffb_autocenter(0), ffb_enabled(true),
             gadget_output_pending_len(0) {
@@ -117,6 +117,16 @@ void GamepadDevice::ToggleEnabled(Input& input) {
         next_state = !enabled;
     }
     SetEnabled(next_state, input);
+}
+
+void GamepadDevice::SetFFBGain(float gain) {
+    if (gain < 0.1f) {
+        gain = 0.1f;
+    } else if (gain > 4.0f) {
+        gain = 4.0f;
+    }
+    std::lock_guard<std::mutex> lock(state_mutex);
+    ffb_gain = gain;
 }
 
 // Logitech G29 HID Report Descriptor
@@ -1090,7 +1100,7 @@ void GamepadDevice::FFBUpdateThread() {
         }
 
         const float offset_limit = 22000.0f;
-        float target_offset = filtered_ffb + spring;
+        float target_offset = (filtered_ffb + spring) * ffb_gain;
         if (target_offset > offset_limit) target_offset = offset_limit;
         if (target_offset < -offset_limit) target_offset = -offset_limit;
 
