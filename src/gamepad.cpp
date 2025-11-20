@@ -25,11 +25,20 @@ void GamepadDevice::ShutdownThreads() {
     gadget_running = false;
     state_cv.notify_all();
     ffb_cv.notify_all();
-    // Forcibly close fd to unblock USB Gadget polling thread if needed
+
+    if (gadget_thread.joinable()) {
+        gadget_thread.join();
+    }
+    if (ffb_thread.joinable()) {
+        ffb_thread.join();
+    }
+
     if (fd >= 0) {
         close(fd);
         fd = -1;
     }
+
+    DestroyUSBGadget();
 }
 #include "gamepad.h"
 #include "input.h"
@@ -46,20 +55,7 @@ void GamepadDevice::ShutdownThreads() {
 #include <thread>
 
 GamepadDevice::~GamepadDevice() {
-    ffb_running = false;
-    if (ffb_thread.joinable()) {
-        ffb_thread.join();
-    }
-
-    gadget_running = false;
-    if (gadget_thread.joinable()) {
-        gadget_thread.join();
-    }
-
-    if (fd >= 0) {
-        close(fd);
-        fd = -1;
-    }
+    ShutdownThreads();
 }
 #include "gamepad.h"
 #include "input.h"
@@ -401,6 +397,34 @@ bool GamepadDevice::CreateUSBGadget() {
     ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
     
     return true;
+}
+
+void GamepadDevice::DestroyUSBGadget() {
+    if (!use_gadget) {
+        return;
+    }
+
+    const char* cleanup_cmd =
+        "cd /sys/kernel/config/usb_gadget 2>/dev/null && "
+        "if [ -d g29wheel ]; then "
+        "  cd g29wheel && "
+        "  echo '' > UDC 2>/dev/null || true; "
+        "  rm -f configs/c.1/hid.usb0 2>/dev/null || true; "
+        "  rmdir configs/c.1/strings/0x409 2>/dev/null || true; "
+        "  rmdir configs/c.1 2>/dev/null || true; "
+        "  rmdir functions/hid.usb0 2>/dev/null || true; "
+        "  cd .. && rmdir g29wheel 2>/dev/null || true; "
+        "fi";
+
+    int ret = system(cleanup_cmd);
+    if (ret != 0) {
+        std::cerr << "USB Gadget cleanup command returned " << ret << std::endl;
+    } else {
+        std::cout << "USB Gadget g29wheel removed" << std::endl;
+    }
+
+    use_gadget = false;
+    use_uhid = false;
 }
 
 bool GamepadDevice::CreateUInput() {

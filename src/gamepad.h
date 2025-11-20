@@ -106,6 +106,7 @@ private:
     bool CreateUHID();
     bool CreateUSBGadget();
     bool CreateUInput();
+    void DestroyUSBGadget();
     void SendUHIDReport();
     std::vector<uint8_t> BuildHIDReport();
     void USBGadgetPollingThread();  // Thread that responds to host polls

@@ -95,6 +95,7 @@ int main(int, char*[]) {
         gamepad.ProcessUHIDEvents();
     }
     // On shutdown, notify all threads to wake up and exit
+    gamepad.SetEnabled(false, input);
     notify_all_shutdown(input, gamepad);
     // Signal threads to exit before destruction
     gamepad.ShutdownThreads();
