@@ -37,6 +37,7 @@
     - `fd` (device file descriptor)
     - `use_uhid`, `use_gadget` (mode flags)
     - `gadget_thread`, `gadget_running` (USB Gadget polling thread)
+    - `gadget_output_thread`, `gadget_output_running` (dedicated OUTPUT drain loop)
     - `ffb_thread`, `ffb_running` (FFB physics thread)
     - `state_mutex` (protects all state)
     - `enabled`, `steering`, `throttle`, `brake`, `clutch`, `button_states` (26 packed bits), `dpad_x`, `dpad_y`, `state_dirty`
@@ -48,7 +49,8 @@
     - `ProcessUHIDEvents()` — handles FFB and state requests
     - `ParseFFBCommand(const uint8_t*, size_t)` — parses FFB commands
     - `FFBUpdateThread()` — physics simulation, runs while `ffb_running && running`
-    - `USBGadgetPollingThread()` — USB comms, runs while `gadget_running && running`
+    - `USBGadgetPollingThread()` — USB comms writer, runs while `gadget_running && running`
+    - `USBGadgetOutputThread()` — waits on `/dev/hidg0` OUTPUT packets and feeds FFB parser
     - `SetEnabled(bool, Input&)`, `IsEnabled()`, `ToggleEnabled(Input&)` — enable/disable logic, grabs/ungrabs devices
     - `EmitEvent(...)`, `ClampSteering(...)`
 
@@ -80,7 +82,8 @@
 ### Threading Model
 - **Main thread:** runs main loop, handles input, state update, and report sending (direct writes only occur for UHID/uinput; gadget mode simply flags `state_dirty`)
 - **FFB Physics thread:** runs `FFBUpdateThread()` (125 Hz) using snapshot copies so heavy math happens outside the mutex, then commits the result in one lock+apply step
-- **USB Gadget polling thread:** runs `USBGadgetPollingThread()` when gadget mode is active; it is now the sole writer to `/dev/hidg0`, retrying writes until the host consumes the report
+- **USB Gadget polling thread:** runs `USBGadgetPollingThread()` when gadget mode is active; it is the sole writer to `/dev/hidg0`, retrying writes until the host consumes the report
+- **USB Gadget OUTPUT thread:** runs `USBGadgetOutputThread()` whenever gadget mode is active so the `/dev/hidg0` OUTPUT queue is drained immediately and FFB packets never starve
 - **Mutex:** `state_mutex` gates all shared state transitions and ensures button arrays, axes, and FFB parameters stay coherent across threads
 
 ### Device Grabbing and Shutdown
@@ -174,7 +177,8 @@ wheel-hid-emulator/
 
 **Threads:**
 - `FFBUpdateThread()`: Physics simulation at 125Hz (mutex-protected)
-- `USBGadgetPollingThread()`: Handles USB host polling (event-driven)
+- `USBGadgetPollingThread()`: Handles USB host polling (event-driven) and writes HID IN reports
+- `USBGadgetOutputThread()`: Separate loop that blocks on OUTPUT transfers so FFB commands are parsed immediately
 
 **Mutex Discipline:**
 - All state updates and report sending are protected by `state_mutex`.
@@ -209,7 +213,8 @@ wheel-hid-emulator/
 
 - **Main Thread:** Runs main loop, handles input and state updates, and queues HID packets (direct emit only for UHID/uinput)
 - **FFB Physics Thread:** Runs `FFBUpdateThread()` (125 Hz) using snapshot/commit semantics to minimize lock time; `ParseFFBCommand()` now wakes this thread immediately whenever new torque/autocenter data arrives so forces apply without a visible delay
-- **USB Gadget Polling Thread:** Runs `USBGadgetPollingThread()` when gadget mode is active; it is the only thread that touches `/dev/hidg0`
+- **USB Gadget Polling Thread:** Runs `USBGadgetPollingThread()` when gadget mode is active; it is the only writer touching `/dev/hidg0`
+- **USB Gadget OUTPUT Thread:** Runs `USBGadgetOutputThread()` in gadget mode; drains `/dev/hidg0` OUTPUT reports immediately so FFB packets hit the physics loop without delay
 - **Mutex:** `state_mutex` in `GamepadDevice` protects all shared state (steering, pedals, compact button bitset, enabled flag, etc.)
 
 ---
@@ -256,6 +261,7 @@ wheel-hid-emulator/
 - `GamepadDevice::ParseFFBCommand()`
 - `GamepadDevice::FFBUpdateThread()`
 - `GamepadDevice::USBGadgetPollingThread()`
+- `GamepadDevice::USBGadgetOutputThread()`
 - `GamepadDevice::SetEnabled()`
 - `GamepadDevice::ToggleEnabled()`
 - `GamepadDevice::IsEnabled()`
@@ -435,10 +441,21 @@ Current (FFB physics improvements + race condition fix **applied**)
 │                  USB Gadget Polling Thread                   │
 │                        (Event-Driven)                        │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │ - Waits for host polls using poll(POLLIN|POLLOUT)     │ │
-│  │ - Sends INPUT reports (wheel state) on POLLOUT         │ │
-│  │ - Receives OUTPUT reports (FFB commands) on POLLIN     │ │
-│  │ - Bidirectional USB HID communication                  │ │
+│  │ - Waits on state_cv for dirty snapshots               │ │
+│  │ - Serializes HID report & WriteHIDBlocking()          │ │
+│  │ - Retries until host consumes the packet               │ │
+│  │ - Sole writer to /dev/hidg0                            │ │
+│  └────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+                              ↕
+┌─────────────────────────────────────────────────────────────┐
+│                 USB Gadget OUTPUT Thread                     │
+│                        (Event-Driven)                        │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │ - poll(POLLIN) on /dev/hidg0 (blocking)               │ │
+│  │ - Reads OUTPUT transfers in 7-byte chunks             │ │
+│  │ - Feeds ParseFFBCommand immediately                   │ │
+│  │ - Keeps FFB queue empty so physics reacts instantly   │ │
 │  └────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -637,8 +654,9 @@ int16_t brake_axis    = 32767 - static_cast<int16_t>(brake * 655.35f);
 3. Create virtual G29 device (USB Gadget only; abort on failure)
 4. Seed `Input` overrides (optional `keyboard=` / `mouse=`); hotplug scanning begins immediately
 5. Start FFB physics thread
-6. Start USB Gadget polling thread (if applicable)
-7. Begin in **disabled** state (devices not grabbed)
+6. Start USB Gadget polling (writer) thread when gadget mode is active
+7. Start USB Gadget OUTPUT thread to drain FFB packets (gadget mode only)
+8. Begin in **disabled** state (devices not grabbed)
 
 **Main Loop (125 Hz / 8ms):**
 ```
@@ -675,7 +693,7 @@ while (running) {
 
 **Cleanup (Ctrl+C):**
 1. Stop FFB thread
-2. Stop USB Gadget thread
+2. Stop USB Gadget polling + OUTPUT threads
 3. Ungrab input devices
 4. Destroy virtual device
 5. Close file descriptors
@@ -700,10 +718,15 @@ while (running) {
 
 ### Thread 3: USB Gadget Polling (Event-Driven)
 - Only active in USB Gadget mode
-- Waits for host polls using `poll()`
-- Becomes the sole writer to `/dev/hidg0`, retrying with short blocking waits so no HID frame is ever dropped due to `EAGAIN`
-- Receives OUTPUT reports (FFB commands) from the host and forwards them to `ParseFFBCommand()`
+- Wakes up when `state_dirty` is set, serializes the 13-byte G29 report, and calls `WriteHIDBlocking()` until the host accepts it
+- Sole writer to `/dev/hidg0`, so report ordering stays deterministic
 - **Mutex:** Locks only long enough to grab a snapshot right before serializing the HID report
+
+### Thread 4: USB Gadget OUTPUT (Event-Driven)
+- Also only active in gadget mode
+- Blocks on `poll(POLLIN)` for `/dev/hidg0`, reads OUTPUT transfers in 7-byte slices, and immediately calls `ParseFFBCommand()`
+- Keeps Logitech driver OUTPUT queue empty so the physics thread reacts as soon as the host sends torque updates
+- Shares no mutexes; only touches the small `gadget_output_pending` buffer and then defers to `ParseFFBCommand()` (which locks `state_mutex`)
 
 **Synchronization:**
 - All shared state protected by `state_mutex`

@@ -100,6 +100,8 @@ private:
     // USB Gadget polling thread (mimics real USB HID device behavior)
     std::thread gadget_thread;
     std::atomic<bool> gadget_running;
+    std::thread gadget_output_thread;
+    std::atomic<bool> gadget_output_running;
     std::thread ffb_thread;
     std::atomic<bool> ffb_running;
     std::atomic<bool> state_dirty;
@@ -138,6 +140,7 @@ private:
     void SendUHIDReport();
     std::array<uint8_t, 13> BuildHIDReport();
     void USBGadgetPollingThread();  // Thread that responds to host polls
+    void USBGadgetOutputThread();   // Thread that waits for OUTPUT reports
     void ReadGadgetOutput();        // Gather host OUTPUT data (FFB) in gadget mode
     void ParseFFBCommand(const uint8_t* data, size_t size);  // Parse FFB OUTPUT reports
     void FFBUpdateThread();  // Thread that continuously applies FFB forces

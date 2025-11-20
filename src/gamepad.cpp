@@ -59,11 +59,15 @@ static_assert(kButtonCodes.size() == static_cast<size_t>(WheelButton::Count), "B
 void GamepadDevice::ShutdownThreads() {
     ffb_running = false;
     gadget_running = false;
+    gadget_output_running = false;
     state_cv.notify_all();
     ffb_cv.notify_all();
 
     if (gadget_thread.joinable()) {
         gadget_thread.join();
+    }
+    if (gadget_output_thread.joinable()) {
+        gadget_output_thread.join();
     }
     if (ffb_thread.joinable()) {
         ffb_thread.join();
@@ -109,6 +113,7 @@ GamepadDevice::~GamepadDevice() {
 
 GamepadDevice::GamepadDevice() 
     : fd(-1), use_uhid(false), use_gadget(false), gadget_running(false),
+        gadget_output_running(false),
         enabled(false), steering(0), user_steering(0.0f), ffb_offset(0.0f), ffb_velocity(0.0f), ffb_gain(1.0f),
             throttle(0.0f), brake(0.0f), clutch(0.0f), dpad_x(0), dpad_y(0),
             ffb_force(0), ffb_autocenter(0), ffb_enabled(true),
@@ -411,7 +416,9 @@ bool GamepadDevice::CreateUSBGadget() {
     // Start polling thread to respond to host requests (like real USB HID device)
     gadget_running = true;
     gadget_thread = std::thread(&GamepadDevice::USBGadgetPollingThread, this);
-    
+    gadget_output_running = true;
+    gadget_output_thread = std::thread(&GamepadDevice::USBGadgetOutputThread, this);
+
     // Start FFB update thread (continuously applies FFB forces)
     ffb_running = true;
     ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
@@ -1041,8 +1048,40 @@ void GamepadDevice::USBGadgetPollingThread() {
         if (should_send) {
             SendUHIDReport();
         }
-        ReadGadgetOutput();
         lock.lock();
+    }
+}
+
+void GamepadDevice::USBGadgetOutputThread() {
+    if (fd < 0) {
+        return;
+    }
+
+    while (gadget_output_running && running) {
+        struct pollfd pfd;
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+
+        int ret = poll(&pfd, 1, 5);
+        if (!gadget_output_running || !running) {
+            break;
+        }
+        if (ret < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+        if (ret == 0) {
+            continue;
+        }
+        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+            break;
+        }
+        if (pfd.revents & POLLIN) {
+            ReadGadgetOutput();
+        }
     }
 }
 
@@ -1052,7 +1091,7 @@ void GamepadDevice::ReadGadgetOutput() {
     }
 
     uint8_t buffer[32];
-    while (gadget_running && running) {
+    while (gadget_output_running && running) {
         ssize_t bytes = read(fd, buffer, sizeof(buffer));
         if (bytes < 0) {
             if (errno == EINTR) {
