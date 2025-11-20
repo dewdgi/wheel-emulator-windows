@@ -730,9 +730,10 @@ void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
 
     switch (cmd) {
         case 0x11: {
-            int force = static_cast<int>(data[2]) - 0x80;
-            force = std::clamp(force, -128, 127);
-            ffb_force = static_cast<int16_t>(-force) * 48;
+            uint16_t raw = static_cast<uint16_t>(data[3]) |
+                           (static_cast<uint16_t>(data[4]) << 8);
+            int16_t magnitude = static_cast<int16_t>(raw);
+            ffb_force = static_cast<int16_t>(-magnitude);
             state_changed = true;
             break;
         }
