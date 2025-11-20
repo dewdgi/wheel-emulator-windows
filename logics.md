@@ -43,7 +43,7 @@
   - **Methods:**
     - `Create()` (USB Gadget only at runtime) with helper routines `CreateUSBGadget()`, `CreateUHID()`, `CreateUInput()` retained for historical reference
     - `UpdateSteering(int, int)`, `UpdateThrottle(bool)`, `UpdateBrake(bool)`, `UpdateClutch(bool)`, `UpdateButtons(const Input&)`, `UpdateDPad(const Input&)`
-    - `SendState()`, `SendUHIDReport()`, `BuildHIDReport()`, `SendNeutral()` (sends neutral HID snapshot on creation/disable)
+    - `SendState()`, `SendUHIDReport()`, `BuildHIDReport()`, `SendNeutral()` (sends neutral HID snapshot on creation and every toggle)
     - `ProcessUHIDEvents()` — handles FFB and state requests
     - `ParseFFBCommand(const uint8_t*, size_t)` — parses FFB commands
     - `FFBUpdateThread()` — physics simulation, runs while `ffb_running && running`
@@ -752,7 +752,7 @@ The live USB Gadget writer (internally still using the UHID report builder) hold
 
 1. `CheckToggle()` detects Ctrl+M press **and** release while holding `state_mutex`, flips `enabled`, and returns the new value.
 2. The main loop immediately calls `input.Grab(enabled)` while still under the same loop iteration, so `enabled == false` guarantees `EVIOCGRAB` is released before the next batch of events is read.
-3. When transitioning to disabled, `SendNeutral()` pushes a centered HID snapshot so the host sees neutral pedals/axes before we let go of the keyboard/mouse devices, preventing “stuck trigger” heuristics in games.
+3. Every time the toggle flips (enable → disable or disable → enable), `SendNeutral()` pushes a centered HID snapshot so the host always samples G29-resting values before we hand input back and forth, preventing “stuck trigger” heuristics in games.
 4. Because `SendState()` can no longer race against `FFBUpdateThread()`, the HID report writer never clobbers the `enabled` latch mid-frame, so Ctrl+M release consistently ungrabs both the keyboard and mouse.
 
 This structural contract removes the data race entirely and couples the grab/ungrab sequence to an atomic state transition, preventing the stuck-grab failure mode observed previously.

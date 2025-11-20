@@ -101,9 +101,7 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
     }
 
     input.Grab(enable);
-        if (!enable) {
-            SendNeutral();
-        }
+    SendNeutral();
         NotifyStateChanged();
     std::cout << (enable ? "Emulation ENABLED" : "Emulation DISABLED") << std::endl;
 }
@@ -696,20 +694,33 @@ void GamepadDevice::UpdateDPad(const Input& input) {
 void GamepadDevice::SendState() {
     if (fd < 0) return;
     
-    if (use_uhid) {
-        SendUHIDReport();
-        return;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        steering = 0.0f;
+        user_steering = 0.0f;
+        ffb_offset = 0.0f;
+        ffb_velocity = 0.0f;
+        throttle = 0.0f;
+        brake = 0.0f;
+        clutch = 0.0f;
+        dpad_x = 0;
+        dpad_y = 0;
+
+        static const char* kButtons[] = {
+            "BTN_SOUTH", "BTN_EAST", "BTN_WEST", "BTN_NORTH",
+            "BTN_TL", "BTN_TR", "BTN_TL2", "BTN_TR2",
+            "BTN_SELECT", "BTN_START", "BTN_THUMBL", "BTN_THUMBR",
+            "BTN_MODE", "BTN_DEAD",
+            "BTN_TRIGGER_HAPPY1", "BTN_TRIGGER_HAPPY2", "BTN_TRIGGER_HAPPY3", "BTN_TRIGGER_HAPPY4",
+            "BTN_TRIGGER_HAPPY5", "BTN_TRIGGER_HAPPY6", "BTN_TRIGGER_HAPPY7", "BTN_TRIGGER_HAPPY8",
+            "BTN_TRIGGER_HAPPY9", "BTN_TRIGGER_HAPPY10", "BTN_TRIGGER_HAPPY11", "BTN_TRIGGER_HAPPY12"
+        };
+        for (const char* name : kButtons) {
+            buttons[name] = false;
+        }
     }
-    
-    // Lock state mutex to prevent race with FFB thread
-    std::lock_guard<std::mutex> lock(state_mutex);
-    
-    // UInput path (fallback)
-    // Send steering wheel position - convert float to int16_t
-    EmitEvent(EV_ABS, ABS_X, static_cast<int16_t>(steering));
-    
-    // Send clutch (ABS_Y)
-    int16_t clutch_val = 32767 - static_cast<int16_t>(clutch * 655.35f);
+
+    SendState();
     EmitEvent(EV_ABS, ABS_Y, clutch_val);
     
     // Send throttle and brake as pedal axes (G29 standard)
