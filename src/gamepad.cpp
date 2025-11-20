@@ -692,46 +692,31 @@ void GamepadDevice::UpdateDPad(const Input& input) {
 }
 
 void GamepadDevice::SendState() {
-    if (fd < 0) return;
-    
-    {
-        std::lock_guard<std::mutex> lock(state_mutex);
-        steering = 0.0f;
-        user_steering = 0.0f;
-        ffb_offset = 0.0f;
-        ffb_velocity = 0.0f;
-        throttle = 0.0f;
-        brake = 0.0f;
-        clutch = 0.0f;
-        dpad_x = 0;
-        dpad_y = 0;
-
-        static const char* kButtons[] = {
-            "BTN_SOUTH", "BTN_EAST", "BTN_WEST", "BTN_NORTH",
-            "BTN_TL", "BTN_TR", "BTN_TL2", "BTN_TR2",
-            "BTN_SELECT", "BTN_START", "BTN_THUMBL", "BTN_THUMBR",
-            "BTN_MODE", "BTN_DEAD",
-            "BTN_TRIGGER_HAPPY1", "BTN_TRIGGER_HAPPY2", "BTN_TRIGGER_HAPPY3", "BTN_TRIGGER_HAPPY4",
-            "BTN_TRIGGER_HAPPY5", "BTN_TRIGGER_HAPPY6", "BTN_TRIGGER_HAPPY7", "BTN_TRIGGER_HAPPY8",
-            "BTN_TRIGGER_HAPPY9", "BTN_TRIGGER_HAPPY10", "BTN_TRIGGER_HAPPY11", "BTN_TRIGGER_HAPPY12"
-        };
-        for (const char* name : kButtons) {
-            buttons[name] = false;
-        }
+    if (fd < 0) {
+        return;
     }
 
-    SendState();
+    if (use_uhid) {
+        SendUHIDReport();
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(state_mutex);
+
+    // Steering (ABS_X)
+    EmitEvent(EV_ABS, ABS_X, static_cast<int16_t>(steering));
+
+    // Clutch (ABS_Y) inverted to match real G29
+    int16_t clutch_val = 32767 - static_cast<int16_t>(clutch * 655.35f);
     EmitEvent(EV_ABS, ABS_Y, clutch_val);
-    
-    // Send throttle and brake as pedal axes (G29 standard)
-    // Real G29 pedals are inverted: 32767 at rest, -32768 when fully pressed
+
+    // Throttle / Brake
     int16_t throttle_val = 32767 - static_cast<int16_t>(throttle * 655.35f);
     int16_t brake_val = 32767 - static_cast<int16_t>(brake * 655.35f);
-    
-    EmitEvent(EV_ABS, ABS_Z, brake_val);    // Brake pedal
-    EmitEvent(EV_ABS, ABS_RZ, throttle_val); // Throttle pedal
-    
-    // Send all 26 G29 buttons
+    EmitEvent(EV_ABS, ABS_Z, brake_val);
+    EmitEvent(EV_ABS, ABS_RZ, throttle_val);
+
+    // Buttons
     EmitEvent(EV_KEY, BTN_SOUTH, buttons["BTN_SOUTH"] ? 1 : 0);
     EmitEvent(EV_KEY, BTN_EAST, buttons["BTN_EAST"] ? 1 : 0);
     EmitEvent(EV_KEY, BTN_WEST, buttons["BTN_WEST"] ? 1 : 0);
@@ -758,12 +743,11 @@ void GamepadDevice::SendState() {
     EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY10, buttons["BTN_TRIGGER_HAPPY10"] ? 1 : 0);
     EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY11, buttons["BTN_TRIGGER_HAPPY11"] ? 1 : 0);
     EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY12, buttons["BTN_TRIGGER_HAPPY12"] ? 1 : 0);
-    
-    // Send D-Pad
+
+    // D-Pad
     EmitEvent(EV_ABS, ABS_HAT0X, dpad_x);
     EmitEvent(EV_ABS, ABS_HAT0Y, dpad_y);
-    
-    // Sync
+
     EmitEvent(EV_SYN, SYN_REPORT, 0);
 }
 
