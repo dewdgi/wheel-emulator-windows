@@ -61,6 +61,7 @@ Input::Input() : prev_toggle(false) {
     memset(keys, 0, sizeof(keys));
     memset(key_counts, 0, sizeof(key_counts));
     last_scan = std::chrono::steady_clock::time_point::min();
+    last_input_activity = std::chrono::steady_clock::time_point::min();
     last_keyboard_error = std::chrono::steady_clock::time_point::min();
     last_mouse_error = std::chrono::steady_clock::time_point::min();
 }
@@ -150,6 +151,7 @@ bool Input::DrainDevice(DeviceHandle& dev, int& mouse_dx) {
     int processed = 0;
     struct input_event ev;
     bool keep = true;
+    bool had_activity = false;
 
     while (processed < kMaxEventsPerDevice) {
         ssize_t n = read(dev.fd, &ev, sizeof(ev));
@@ -194,11 +196,17 @@ bool Input::DrainDevice(DeviceHandle& dev, int& mouse_dx) {
                 keys[ev.code] = key_counts[ev.code] > 0;
             }
             dev.last_active = std::chrono::steady_clock::now();
+            had_activity = true;
         }
         if (dev.mouse_capable && ev.type == EV_REL && ev.code == REL_X) {
             mouse_dx += ev.value;
             dev.last_active = std::chrono::steady_clock::now();
+            had_activity = true;
         }
+    }
+
+    if (had_activity) {
+        last_input_activity = std::chrono::steady_clock::now();
     }
 
     return keep;
@@ -224,8 +232,18 @@ void Input::RefreshDevices() {
 
     auto now = std::chrono::steady_clock::now();
     constexpr auto kScanInterval = std::chrono::milliseconds(500);
+    constexpr auto kIdleBeforeScan = std::chrono::milliseconds(40);
+    constexpr auto kMaxScanDelay = std::chrono::seconds(5);
     if (last_scan != std::chrono::steady_clock::time_point::min() &&
         now - last_scan < kScanInterval) {
+        return;
+    }
+
+    bool recently_active = last_input_activity != std::chrono::steady_clock::time_point::min() &&
+                           (now - last_input_activity) < kIdleBeforeScan;
+    bool force_scan = last_scan == std::chrono::steady_clock::time_point::min() ||
+                      (now - last_scan) >= kMaxScanDelay;
+    if (recently_active && !force_scan) {
         return;
     }
     last_scan = now;

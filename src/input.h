@@ -56,6 +56,7 @@ private:
     std::string keyboard_override;
     std::string mouse_override;
     std::chrono::steady_clock::time_point last_scan;
+    std::chrono::steady_clock::time_point last_input_activity;
     std::chrono::steady_clock::time_point last_keyboard_error;
     std::chrono::steady_clock::time_point last_mouse_error;
     bool keys[KEY_MAX];

@@ -61,7 +61,7 @@
     - `prev_toggle` (for Ctrl+M edge detection)
   - **Methods:**
     - `DiscoverKeyboard(const std::string&)`, `DiscoverMouse(const std::string&)` — store overrides and trigger refresh
-    - `RefreshDevices()` — rescans `/dev/input` and hotplugs active devices (auto + manual)
+    - `RefreshDevices()` — rescans `/dev/input` and hotplugs active devices (auto + manual) but now defers the expensive scan until ~40 ms of input inactivity (with a 5 s forced cap) so gameplay input never stalls during hotplug detection
       - When both keyboard and mouse overrides are supplied, auto-detected devices are immediately closed and skipped so only the pinned descriptors remain
     - `WaitForEvents(int timeout_ms)` — polls all tracked descriptors (returns early on activity)
     - `Read(int&)` — drains device queues, updates aggregated key/mouse state, drops disconnected devices
@@ -800,7 +800,7 @@ gain=0.1
 
 ## Runtime Device Tracking
 
-- Every 500 ms the input layer scans `/dev/input` for `event*` nodes.
+- Every 500 ms (or sooner when idle) the input layer scans `/dev/input` for `event*` nodes, but scans are deferred until 40 ms of inactivity (forced every 5 s) so active gameplay input never pauses.
 - Devices stay open as long as they advertise the needed capabilities (`EV_KEY` with alphanumeric keys and/or `REL_X`).
 - Manual overrides from the config are reopened on demand and marked as `manual`, so they are never dropped by the auto-pruner.
 - All open descriptors participate in a single `poll()` (`WaitForEvents`) and are drained each frame.
