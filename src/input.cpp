@@ -340,6 +340,7 @@ Input::DeviceHandle* Input::FindDevice(const std::string& path) {
 
 void Input::CloseDevice(DeviceHandle& dev) {
     ReleaseDeviceKeys(dev);
+    dev.grabbed = false;
     if (dev.fd >= 0) {
         close(dev.fd);
         dev.fd = -1;
@@ -405,14 +406,26 @@ void Input::Grab(bool enable) {
         if (!dev.keyboard_capable && !dev.mouse_capable) {
             continue;
         }
+        if (enable && dev.grabbed) {
+            continue;
+        }
+        if (!enable && !dev.grabbed) {
+            continue;
+        }
         if (ioctl(dev.fd, EVIOCGRAB, grab) < 0) {
             if (enable) {
                 std::cerr << "Failed to grab device " << dev.path << ": " << strerror(errno) << std::endl;
             } else if (errno != EINVAL && errno != ENODEV) {
                 std::cerr << "Failed to release device " << dev.path << ": " << strerror(errno) << std::endl;
             }
+            if (!enable) {
+                dev.grabbed = false;
+            }
         } else if (enable) {
             std::cout << "Grabbed " << dev.path << std::endl;
+            dev.grabbed = true;
+        } else {
+            dev.grabbed = false;
         }
     }
 }

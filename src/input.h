@@ -48,6 +48,7 @@ private:
         bool keyboard_capable = false;
         bool mouse_capable = false;
         bool manual = false;
+        bool grabbed = false;
         std::chrono::steady_clock::time_point last_active;
         std::vector<uint8_t> key_shadow;
     };
