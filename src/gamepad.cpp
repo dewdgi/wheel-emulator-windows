@@ -345,22 +345,25 @@ bool GamepadDevice::BindUDC() {
             return false;
         }
     }
-    if (fd < 0) {
-        fd = open(kHidDevice, O_RDWR);
-        if (fd < 0) {
-            std::cerr << "[GamepadDevice] Failed to open " << kHidDevice << " before binding" << std::endl;
-            return false;
-        }
-    }
 
     if (!WriteStringToFile(GadgetUDCPath(), udc_name)) {
         std::cerr << "[GamepadDevice] Failed to bind UDC '" << udc_name << "'" << std::endl;
-        close(fd);
-        fd = -1;
         return false;
     }
     udc_bound = true;
     std::cout << "[GamepadDevice] Bound UDC '" << udc_name << "'" << std::endl;
+
+    if (fd >= 0) {
+        close(fd);
+    }
+    fd = open(kHidDevice, O_RDWR);
+    if (fd < 0) {
+        std::cerr << "[GamepadDevice] Failed to open " << kHidDevice
+                  << " after binding: " << strerror(errno) << std::endl;
+        WriteStringToFile(GadgetUDCPath(), "");
+        udc_bound = false;
+        return false;
+    }
     return true;
 }
 
