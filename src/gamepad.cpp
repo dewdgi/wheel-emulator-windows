@@ -189,6 +189,7 @@ bool GamepadDevice::Create() {
     ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
 
     SendNeutral(true);
+    UnbindUDC();
     return true;
 }
 
@@ -270,7 +271,7 @@ bool GamepadDevice::CreateUSBGadget() {
 
     usleep(500000);
 
-    fd = open(kHidDevice, O_RDWR | O_NONBLOCK);
+    fd = open(kHidDevice, O_RDWR);
     if (fd < 0) {
         std::cerr << "USB Gadget configured but failed to open " << kHidDevice << std::endl;
         return false;
@@ -345,7 +346,7 @@ bool GamepadDevice::BindUDC() {
         }
     }
     if (fd < 0) {
-        fd = open(kHidDevice, O_RDWR | O_NONBLOCK);
+        fd = open(kHidDevice, O_RDWR);
         if (fd < 0) {
             std::cerr << "[GamepadDevice] Failed to open " << kHidDevice << " before binding" << std::endl;
             return false;
@@ -360,7 +361,6 @@ bool GamepadDevice::BindUDC() {
     }
     udc_bound = true;
     std::cout << "[GamepadDevice] Bound UDC '" << udc_name << "'" << std::endl;
-    EnsureGadgetThreadsStarted();
     return true;
 }
 
@@ -374,12 +374,22 @@ bool GamepadDevice::UnbindUDC() {
         return false;
     }
     udc_bound = false;
+    if (fd >= 0) {
+        close(fd);
+        fd = -1;
+    }
     StopGadgetThreads();
     std::cout << "[GamepadDevice] Unbound UDC" << std::endl;
     return true;
 }
 
 void GamepadDevice::EnsureGadgetThreadsStarted() {
+    if (fd >= 0) {
+        int flags = fcntl(fd, F_GETFL, 0);
+        if (flags >= 0 && !(flags & O_NONBLOCK)) {
+            fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        }
+    }
     if (!gadget_running) {
         gadget_running = true;
         gadget_thread = std::thread(&GamepadDevice::USBGadgetPollingThread, this);
@@ -520,6 +530,8 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
             return;
         }
 
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
         if (!WriteReportBlocking(neutral_report) || !WriteReportBlocking(snapshot_report)) {
             std::cerr << "[GamepadDevice] Failed to prime HID reports; disconnecting" << std::endl;
             UnbindUDC();
@@ -531,6 +543,7 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
             return;
         }
 
+        EnsureGadgetThreadsStarted();
         output_enabled.store(true, std::memory_order_release);
         warmup_frames.store(25, std::memory_order_release);
         state_cv.notify_all();
@@ -784,9 +797,16 @@ bool GamepadDevice::WriteReportBlocking(const std::array<uint8_t, 13>& report) {
             fd = -1;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        fd = open(kHidDevice, O_RDWR | O_NONBLOCK);
+        fd = open(kHidDevice, O_RDWR);
         if (fd < 0) {
             break;
+        }
+        if (gadget_running.load(std::memory_order_relaxed) ||
+            gadget_output_running.load(std::memory_order_relaxed)) {
+            int flags = fcntl(fd, F_GETFL, 0);
+            if (flags >= 0 && !(flags & O_NONBLOCK)) {
+                fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+            }
         }
     }
     return false;
