@@ -310,6 +310,10 @@ std::string GamepadDevice::GadgetUDCPath() const {
     return std::string("/sys/kernel/config/usb_gadget/") + kGadgetName + "/UDC";
 }
 
+std::string GamepadDevice::GadgetStatePath() const {
+    return std::string("/sys/kernel/config/usb_gadget/") + kGadgetName + "/state";
+}
+
 std::string GamepadDevice::DetectFirstUDC() const {
     DIR* dir = opendir("/sys/class/udc");
     if (!dir) {
@@ -850,13 +854,31 @@ bool GamepadDevice::WaitForEndpointReady(int timeout_ms) {
         return false;
     }
 
+    const std::string state_path = GadgetStatePath();
+    const bool state_available = access(state_path.c_str(), R_OK) == 0;
+    std::string last_state;
+
     auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     while (running && std::chrono::steady_clock::now() < deadline) {
+        if (state_available) {
+            std::string state = ReadTrimmedFile(state_path);
+            if (!state.empty()) {
+                last_state = state;
+                for (char& c : state) {
+                    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                }
+                if (state.find("configured") != std::string::npos) {
+                    return true;
+                }
+            }
+        }
+
         pollfd p{};
         p.fd = fd;
         p.events = POLLOUT;
         p.revents = 0;
-        int remaining = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count());
+        int remaining = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count());
         if (remaining < 5) {
             remaining = 5;
         } else if (remaining > 50) {
@@ -865,18 +887,19 @@ bool GamepadDevice::WaitForEndpointReady(int timeout_ms) {
         int ret = poll(&p, 1, remaining);
         if (ret > 0) {
             if (p.revents & (POLLERR | POLLHUP | POLLNVAL)) {
-                return false;
+                break;
             }
             if (p.revents & POLLOUT) {
                 return true;
             }
-        } else if (ret == 0) {
-            continue;
-        } else if (errno == EINTR) {
-            continue;
-        } else {
-            return false;
+        } else if (ret < 0 && errno != EINTR) {
+            break;
         }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    if (state_available && !last_state.empty()) {
+        std::cerr << "[GamepadDevice] Gadget state before timeout: " << last_state << std::endl;
     }
     return false;
 }

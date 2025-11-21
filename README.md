@@ -1,3 +1,7 @@
+
+# CURRENTLY COMPLETELY BROKEN WILL FIX LATER TODAY 11/21/2025
+
+
 # Wheel HID Emulator
 
 Transform a keyboard and mouse into a force-feedback Logitech G29 Racing Wheel on Linux. The emulator exposes a **real USB HID gadget** (VID `046d`, PID `c24f`) so games, Wine/Proton, and consoles see an authentic wheel.
