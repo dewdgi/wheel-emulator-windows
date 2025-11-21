@@ -83,13 +83,7 @@ int main(int, char*[]) {
         }
 
         if (gamepad.IsEnabled()) {
-            gamepad.UpdateSteering(mouse_dx, config.sensitivity);
-            gamepad.UpdateThrottle(input.IsKeyPressed(KEY_W), dt);
-            gamepad.UpdateBrake(input.IsKeyPressed(KEY_S), dt);
-            gamepad.UpdateClutch(input.IsKeyPressed(KEY_A), dt);
-            gamepad.UpdateButtons(input);
-            gamepad.UpdateDPad(input);
-            gamepad.SendState();
+            gamepad.ProcessInputFrame(mouse_dx, config.sensitivity, input);
         }
 
     }

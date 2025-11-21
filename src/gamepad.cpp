@@ -94,6 +94,15 @@ std::string HexValue(uint16_t value) {
 
 }  // namespace
 
+struct GamepadDevice::ControlSnapshot {
+    bool throttle = false;
+    bool brake = false;
+    bool clutch = false;
+    int8_t dpad_x = 0;
+    int8_t dpad_y = 0;
+    std::array<uint8_t, static_cast<size_t>(WheelButton::Count)> buttons{};
+};
+
 void GamepadDevice::NotifyAllShutdownCVs() {
     state_cv.notify_all();
     ffb_cv.notify_all();
@@ -272,6 +281,53 @@ bool GamepadDevice::IsEnabled() {
     return enabled;
 }
 
+GamepadDevice::ControlSnapshot GamepadDevice::CaptureSnapshot(const Input& input) const {
+    ControlSnapshot snapshot;
+    snapshot.throttle = input.IsKeyPressed(KEY_W);
+    snapshot.brake = input.IsKeyPressed(KEY_S);
+    snapshot.clutch = input.IsKeyPressed(KEY_A);
+
+    int right = input.IsKeyPressed(KEY_RIGHT) ? 1 : 0;
+    int left = input.IsKeyPressed(KEY_LEFT) ? 1 : 0;
+    int down = input.IsKeyPressed(KEY_DOWN) ? 1 : 0;
+    int up = input.IsKeyPressed(KEY_UP) ? 1 : 0;
+    snapshot.dpad_x = static_cast<int8_t>(right - left);
+    snapshot.dpad_y = static_cast<int8_t>(down - up);
+
+    auto set_button = [&](WheelButton button, bool pressed) {
+        snapshot.buttons[static_cast<size_t>(button)] = pressed ? 1 : 0;
+    };
+
+    set_button(WheelButton::South, input.IsKeyPressed(KEY_Q));
+    set_button(WheelButton::East, input.IsKeyPressed(KEY_E));
+    set_button(WheelButton::West, input.IsKeyPressed(KEY_F));
+    set_button(WheelButton::North, input.IsKeyPressed(KEY_G));
+    set_button(WheelButton::TL, input.IsKeyPressed(KEY_H));
+    set_button(WheelButton::TR, input.IsKeyPressed(KEY_R));
+    set_button(WheelButton::TL2, input.IsKeyPressed(KEY_T));
+    set_button(WheelButton::TR2, input.IsKeyPressed(KEY_Y));
+    set_button(WheelButton::Select, input.IsKeyPressed(KEY_U));
+    set_button(WheelButton::Start, input.IsKeyPressed(KEY_I));
+    set_button(WheelButton::ThumbL, input.IsKeyPressed(KEY_O));
+    set_button(WheelButton::ThumbR, input.IsKeyPressed(KEY_P));
+    set_button(WheelButton::Mode, input.IsKeyPressed(KEY_1));
+    set_button(WheelButton::Dead, input.IsKeyPressed(KEY_2));
+    set_button(WheelButton::TriggerHappy1, input.IsKeyPressed(KEY_3));
+    set_button(WheelButton::TriggerHappy2, input.IsKeyPressed(KEY_4));
+    set_button(WheelButton::TriggerHappy3, input.IsKeyPressed(KEY_5));
+    set_button(WheelButton::TriggerHappy4, input.IsKeyPressed(KEY_6));
+    set_button(WheelButton::TriggerHappy5, input.IsKeyPressed(KEY_7));
+    set_button(WheelButton::TriggerHappy6, input.IsKeyPressed(KEY_8));
+    set_button(WheelButton::TriggerHappy7, input.IsKeyPressed(KEY_9));
+    set_button(WheelButton::TriggerHappy8, input.IsKeyPressed(KEY_0));
+    set_button(WheelButton::TriggerHappy9, input.IsKeyPressed(KEY_LEFTSHIFT));
+    set_button(WheelButton::TriggerHappy10, input.IsKeyPressed(KEY_SPACE));
+    set_button(WheelButton::TriggerHappy11, input.IsKeyPressed(KEY_TAB));
+    set_button(WheelButton::TriggerHappy12, input.IsKeyPressed(KEY_ENTER));
+
+    return snapshot;
+}
+
 void GamepadDevice::SetEnabled(bool enable, Input& input) {
     bool changed = false;
     {
@@ -289,13 +345,12 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
     if (enable) {
         input.ResyncKeyStates();
         SendNeutral(false);
-        ApplyInputSnapshot(input);
+        ApplyCurrentInput(input);
         warmup_frames.store(25, std::memory_order_release);
     } else {
         warmup_frames.store(0, std::memory_order_release);
         SendNeutral(true);
     }
-    SendState();
     std::cout << (enable ? "Emulation ENABLED" : "Emulation DISABLED") << std::endl;
 }
 
@@ -318,161 +373,107 @@ void GamepadDevice::SetFFBGain(float gain) {
     ffb_gain = gain;
 }
 
-void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
-    if (delta == 0) {
-        return;
-    }
-
+void GamepadDevice::ProcessInputFrame(int mouse_dx, int sensitivity, const Input& input) {
+    ControlSnapshot snapshot = CaptureSnapshot(input);
     bool changed = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex);
-        constexpr float base_gain = 0.05f;
-        const float gain = static_cast<float>(sensitivity) * base_gain;
-        const float max_step = 2000.0f;
-        float step = delta * gain;
-        step = std::clamp(step, -max_step, max_step);
-        user_steering += step;
-        const float max_angle = 32767.0f;
-        user_steering = std::clamp(user_steering, -max_angle, max_angle);
-        changed = ApplySteeringLocked();
-    }
-
-    if (changed) {
-        NotifyStateChanged();
-    }
-}
-
-void GamepadDevice::UpdateThrottle(bool pressed, float) {
-    bool changed = false;
-    {
-        std::lock_guard<std::mutex> lock(state_mutex);
-        float next = pressed ? 100.0f : 0.0f;
-        if (throttle != next) {
-            throttle = next;
-            changed = true;
-        }
+        changed |= ApplySteeringDeltaLocked(mouse_dx, sensitivity);
+        changed |= ApplySnapshotLocked(snapshot);
     }
     if (changed) {
         NotifyStateChanged();
     }
 }
 
-void GamepadDevice::UpdateBrake(bool pressed, float) {
+void GamepadDevice::ApplyCurrentInput(const Input& input) {
+    ControlSnapshot snapshot = CaptureSnapshot(input);
     bool changed = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex);
-        float next = pressed ? 100.0f : 0.0f;
-        if (brake != next) {
-            brake = next;
-            changed = true;
-        }
+        changed = ApplySnapshotLocked(snapshot);
     }
     if (changed) {
         NotifyStateChanged();
     }
-}
-
-void GamepadDevice::UpdateClutch(bool pressed, float) {
-    bool changed = false;
-    {
-        std::lock_guard<std::mutex> lock(state_mutex);
-        float next = pressed ? 100.0f : 0.0f;
-        if (clutch != next) {
-            clutch = next;
-            changed = true;
-        }
-    }
-    if (changed) {
-        NotifyStateChanged();
-    }
-}
-
-void GamepadDevice::UpdateButtons(const Input& input) {
-    {
-        std::lock_guard<std::mutex> lock(state_mutex);
-        SetButton(WheelButton::South, input.IsKeyPressed(KEY_Q));
-        SetButton(WheelButton::East, input.IsKeyPressed(KEY_E));
-        SetButton(WheelButton::West, input.IsKeyPressed(KEY_F));
-        SetButton(WheelButton::North, input.IsKeyPressed(KEY_G));
-        SetButton(WheelButton::TL, input.IsKeyPressed(KEY_H));
-        SetButton(WheelButton::TR, input.IsKeyPressed(KEY_R));
-        SetButton(WheelButton::TL2, input.IsKeyPressed(KEY_T));
-        SetButton(WheelButton::TR2, input.IsKeyPressed(KEY_Y));
-        SetButton(WheelButton::Select, input.IsKeyPressed(KEY_U));
-        SetButton(WheelButton::Start, input.IsKeyPressed(KEY_I));
-        SetButton(WheelButton::ThumbL, input.IsKeyPressed(KEY_O));
-        SetButton(WheelButton::ThumbR, input.IsKeyPressed(KEY_P));
-        SetButton(WheelButton::Mode, input.IsKeyPressed(KEY_1));
-        SetButton(WheelButton::Dead, input.IsKeyPressed(KEY_2));
-        SetButton(WheelButton::TriggerHappy1, input.IsKeyPressed(KEY_3));
-        SetButton(WheelButton::TriggerHappy2, input.IsKeyPressed(KEY_4));
-        SetButton(WheelButton::TriggerHappy3, input.IsKeyPressed(KEY_5));
-        SetButton(WheelButton::TriggerHappy4, input.IsKeyPressed(KEY_6));
-        SetButton(WheelButton::TriggerHappy5, input.IsKeyPressed(KEY_7));
-        SetButton(WheelButton::TriggerHappy6, input.IsKeyPressed(KEY_8));
-        SetButton(WheelButton::TriggerHappy7, input.IsKeyPressed(KEY_9));
-        SetButton(WheelButton::TriggerHappy8, input.IsKeyPressed(KEY_0));
-        SetButton(WheelButton::TriggerHappy9, input.IsKeyPressed(KEY_LEFTSHIFT));
-        SetButton(WheelButton::TriggerHappy10, input.IsKeyPressed(KEY_SPACE));
-        SetButton(WheelButton::TriggerHappy11, input.IsKeyPressed(KEY_TAB));
-        SetButton(WheelButton::TriggerHappy12, input.IsKeyPressed(KEY_ENTER));
-    }
-    NotifyStateChanged();
-}
-
-void GamepadDevice::UpdateDPad(const Input& input) {
-    std::lock_guard<std::mutex> lock(state_mutex);
-
-    int right = input.IsKeyPressed(KEY_RIGHT) ? 1 : 0;
-    int left = input.IsKeyPressed(KEY_LEFT) ? 1 : 0;
-    int down = input.IsKeyPressed(KEY_DOWN) ? 1 : 0;
-    int up = input.IsKeyPressed(KEY_UP) ? 1 : 0;
-
-    dpad_x = right - left;
-    dpad_y = down - up;
-}
-
-void GamepadDevice::SendState() {
-    if (fd < 0) {
-        return;
-    }
-    NotifyStateChanged();
 }
 
 void GamepadDevice::SendNeutral(bool reset_ffb) {
     {
         std::lock_guard<std::mutex> lock(state_mutex);
-        steering = 0.0f;
-        user_steering = 0.0f;
-        if (reset_ffb) {
-            ffb_offset = 0.0f;
-            ffb_velocity = 0.0f;
-        }
-        throttle = 0.0f;
-        brake = 0.0f;
-        clutch = 0.0f;
-        dpad_x = 0;
-        dpad_y = 0;
-        button_states.fill(0);
+        ApplyNeutralLocked(reset_ffb);
     }
-
     if (fd >= 0) {
         NotifyStateChanged();
     }
-}
-
-void GamepadDevice::ApplyInputSnapshot(const Input& input) {
-    UpdateThrottle(input.IsKeyPressed(KEY_W), 0.0f);
-    UpdateBrake(input.IsKeyPressed(KEY_S), 0.0f);
-    UpdateClutch(input.IsKeyPressed(KEY_A), 0.0f);
-    UpdateButtons(input);
-    UpdateDPad(input);
 }
 
 void GamepadDevice::NotifyStateChanged() {
     state_dirty.store(true, std::memory_order_release);
     state_cv.notify_all();
     ffb_cv.notify_all();
+}
+
+bool GamepadDevice::ApplySteeringDeltaLocked(int delta, int sensitivity) {
+    if (delta == 0) {
+        return false;
+    }
+
+    constexpr float base_gain = 0.05f;
+    const float gain = static_cast<float>(sensitivity) * base_gain;
+    const float max_step = 2000.0f;
+    float step = static_cast<float>(delta) * gain;
+    step = std::clamp(step, -max_step, max_step);
+    user_steering += step;
+    const float max_angle = 32767.0f;
+    user_steering = std::clamp(user_steering, -max_angle, max_angle);
+    return ApplySteeringLocked();
+}
+
+bool GamepadDevice::ApplySnapshotLocked(const ControlSnapshot& snapshot) {
+    bool changed = false;
+    auto set_axis = [&](float& axis, bool pressed) {
+        float next = pressed ? 100.0f : 0.0f;
+        if (axis != next) {
+            axis = next;
+            changed = true;
+        }
+    };
+
+    set_axis(throttle, snapshot.throttle);
+    set_axis(brake, snapshot.brake);
+    set_axis(clutch, snapshot.clutch);
+
+    if (dpad_x != snapshot.dpad_x) {
+        dpad_x = snapshot.dpad_x;
+        changed = true;
+    }
+    if (dpad_y != snapshot.dpad_y) {
+        dpad_y = snapshot.dpad_y;
+        changed = true;
+    }
+
+    if (button_states != snapshot.buttons) {
+        button_states = snapshot.buttons;
+        changed = true;
+    }
+
+    return changed;
+}
+
+void GamepadDevice::ApplyNeutralLocked(bool reset_ffb) {
+    steering = 0.0f;
+    user_steering = 0.0f;
+    if (reset_ffb) {
+        ffb_offset = 0.0f;
+        ffb_velocity = 0.0f;
+    }
+    throttle = 0.0f;
+    brake = 0.0f;
+    clutch = 0.0f;
+    dpad_x = 0;
+    dpad_y = 0;
+    button_states.fill(0);
 }
 
 std::array<uint8_t, 13> GamepadDevice::BuildHIDReport() {
@@ -839,10 +840,6 @@ bool GamepadDevice::ApplySteeringLocked() {
     }
     steering = combined;
     return true;
-}
-
-void GamepadDevice::SetButton(WheelButton button, bool pressed) {
-    button_states[static_cast<size_t>(button)] = pressed ? 1 : 0;
 }
 
 uint32_t GamepadDevice::BuildButtonBitsLocked() const {

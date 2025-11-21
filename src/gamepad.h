@@ -60,17 +60,12 @@ public:
     void ToggleEnabled(Input& input);
     void SetFFBGain(float gain);
 
-    void UpdateSteering(int delta, int sensitivity);
-    void UpdateThrottle(bool pressed, float dt);
-    void UpdateBrake(bool pressed, float dt);
-    void UpdateClutch(bool pressed, float dt);
-    void UpdateButtons(const Input& input);
-    void UpdateDPad(const Input& input);
-    void SendState();
+    void ProcessInputFrame(int mouse_dx, int sensitivity, const Input& input);
     void SendNeutral(bool reset_ffb = true);
-    void ApplyInputSnapshot(const Input& input);
+    void ApplyCurrentInput(const Input& input);
 
 private:
+    struct ControlSnapshot;
     void NotifyStateChanged();
     bool CreateUSBGadget();
     void DestroyUSBGadget();
@@ -83,7 +78,10 @@ private:
     void ParseFFBCommand(const uint8_t* data, size_t size);
     float ShapeFFBTorque(float raw_force) const;
     bool ApplySteeringLocked();
-    void SetButton(WheelButton button, bool pressed);
+    bool ApplySteeringDeltaLocked(int delta, int sensitivity);
+    bool ApplySnapshotLocked(const ControlSnapshot& snapshot);
+    void ApplyNeutralLocked(bool reset_ffb);
+    ControlSnapshot CaptureSnapshot(const Input& input) const;
     uint32_t BuildButtonBitsLocked() const;
     bool WriteHIDBlocking(const uint8_t* data, size_t size);
 

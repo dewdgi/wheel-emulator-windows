@@ -8,7 +8,7 @@ Transform a keyboard and mouse into a force-feedback Logitech G29 Racing Wheel o
 - Force feedback physics loop (125 Hz) with Logitech-compatible OUTPUT report parsing.
 - Mouse X → steering, keyboard keys → pedals, clutch, 26 buttons, and D-pad.
 - Hotplug-aware input stack with Ctrl+M grab/ungrab toggle and Ctrl+C shutdown.
-- Snapshot + warmup path guarantees pedals/buttons return instantly after a toggle, even if you flip Ctrl+M 100× per second.
+- Snapshot + warmup path guarantees pedals/buttons return instantly after a toggle, while a single-lock frame builder keeps every axis/button update atomic even if you flip Ctrl+M 100× per second.
 - Configurable steering sensitivity and FFB gain via `/etc/wheel-emulator.conf`.
 
 ## Requirements
@@ -39,7 +39,7 @@ Runtime controls:
 - **Ctrl+M** – toggle emulation on/off (grabs or releases keyboard/mouse). The combo is edge-triggered, so you can keep holding Ctrl and tap M rapidly without missing a transition.
 - **Ctrl+C** – exit cleanly, tearing down the ConfigFS gadget
 
-The toggle path caches device handles, skips redundant EVIOCGRAB calls, and only re-syncs key state when a new keyboard appears. That means even extremely fast enable/disable cycles keep the pedal snapshot aligned with whatever you’re holding.
+The toggle path refreshes device discovery once when you enable, auto-grabs anything discovered later, and only re-syncs key state when a new keyboard appears. Combined with the single-shot snapshot writer, even extremely fast enable/disable cycles keep the pedal state aligned with whatever you’re holding.
 
 ## Controls & Mapping
 
@@ -86,12 +86,16 @@ The toggle path caches device handles, skips redundant EVIOCGRAB calls, and only
 
 Remap these inside your game just like a real Logitech wheel.
 
+## Input Pipeline
+
+Each frame the main loop builds a snapshot of every pedal, button, and D-pad bit, then hands it plus the current mouse delta to `ProcessInputFrame()`. Inside the wheel device this snapshot is applied under a single mutex, so the host only ever sees whole frames—no more half-updated pedals or staggered button toggles.
+
 ## Enable/Disable Flow
 
 1. Press **Ctrl+M**.
-2. Input devices are grabbed or released via `EVIOCGRAB`, but key state tracking keeps running so your current pedal position is never lost.
-3. If a new keyboard was discovered, `ResyncKeyStates()` snapshots its hardware state; otherwise this step is skipped for speed.
-4. The current key snapshot is reapplied to the HID state, then the gadget writer pushes ~25 “warmup” frames (neutral + snapshot) so any game sitting in an input menu immediately sees accurate pedals/axes.
+2. The input layer refreshes `/dev/input/event*`, opens anything new, and sets `grab_desired` so every matching device is immediately `EVIOCGRAB`’d (even ones that hotplug later).
+3. Key state tracking keeps running, so pedal positions survive while ungrabbed; `ResyncKeyStates()` only re-queries hardware if something actually changed.
+4. Re-enabling writes a neutral frame, then reapplies the freshly captured snapshot inside a single lock before scheduling the ~25-frame warmup burst, so games sitting in an input menu instantly see consistent axes.
 
 This pipeline makes rapid toggles cheap (tested at 100 Hz) while still guaranteeing the host receives a clean frame whenever control changes.
 

@@ -58,7 +58,7 @@ bool DeviceSupportsMouse(int fd) {
 }
 }
 
-Input::Input() : resync_pending(true), prev_toggle(false) {
+Input::Input() : resync_pending(true), grab_desired(false), prev_toggle(false) {
     memset(keys, 0, sizeof(keys));
     memset(key_counts, 0, sizeof(key_counts));
     last_scan = std::chrono::steady_clock::time_point::min();
@@ -302,8 +302,17 @@ void Input::RefreshDevices() {
         }
 
         devices.push_back(std::move(handle));
-        if (devices.back().keyboard_capable) {
+        DeviceHandle& new_dev = devices.back();
+        if (new_dev.keyboard_capable) {
             MarkResyncNeeded();
+        }
+        if (grab_desired && (new_dev.keyboard_capable || new_dev.mouse_capable)) {
+            if (ioctl(new_dev.fd, EVIOCGRAB, 1) == 0) {
+                new_dev.grabbed = true;
+            } else if (ShouldLogAgain(last_grab_log)) {
+                std::cerr << "Failed to grab device " << new_dev.path
+                          << ": " << strerror(errno) << std::endl;
+            }
         }
     }
     closedir(dir);
@@ -412,6 +421,10 @@ bool Input::CheckToggle() {
 }
 
 void Input::Grab(bool enable) {
+    grab_desired = enable;
+    if (enable) {
+        RefreshDevices();
+    }
     int grab = enable ? 1 : 0;
     int changed = 0;
     for (auto& dev : devices) {
