@@ -117,6 +117,8 @@ GamepadDevice::GamepadDevice()
     ffb_running = false;
     state_dirty = false;
         warmup_frames.store(0, std::memory_order_relaxed);
+    output_enabled.store(false, std::memory_order_relaxed);
+    frames_sent.store(0, std::memory_order_relaxed);
     button_states.fill(0);
 }
 
@@ -129,6 +131,7 @@ void GamepadDevice::ShutdownThreads() {
     gadget_running = false;
     gadget_output_running = false;
         warmup_frames.store(0, std::memory_order_relaxed);
+    output_enabled.store(false, std::memory_order_relaxed);
 
     state_cv.notify_all();
     ffb_cv.notify_all();
@@ -344,12 +347,18 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
     input.Grab(enable);
     if (enable) {
         input.ResyncKeyStates();
+        ControlSnapshot snapshot = CaptureSnapshot(input);
+        output_enabled.store(true, std::memory_order_release);
+        warmup_frames.store(0, std::memory_order_release);
         SendNeutral(false);
-        ApplyCurrentInput(input);
+        FlushStateBlocking();
+        ApplySnapshot(snapshot);
         warmup_frames.store(25, std::memory_order_release);
     } else {
         warmup_frames.store(0, std::memory_order_release);
         SendNeutral(true);
+        FlushStateBlocking();
+        output_enabled.store(false, std::memory_order_release);
     }
     std::cout << (enable ? "Emulation ENABLED" : "Emulation DISABLED") << std::endl;
 }
@@ -388,6 +397,10 @@ void GamepadDevice::ProcessInputFrame(int mouse_dx, int sensitivity, const Input
 
 void GamepadDevice::ApplyCurrentInput(const Input& input) {
     ControlSnapshot snapshot = CaptureSnapshot(input);
+    ApplySnapshot(snapshot);
+}
+
+void GamepadDevice::ApplySnapshot(const ControlSnapshot& snapshot) {
     bool changed = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex);
@@ -476,6 +489,22 @@ void GamepadDevice::ApplyNeutralLocked(bool reset_ffb) {
     button_states.fill(0);
 }
 
+void GamepadDevice::FlushStateBlocking() {
+    if (fd < 0) {
+        return;
+    }
+    const uint64_t target = frames_sent.load(std::memory_order_acquire) + 1;
+    for (int i = 0; i < 200; ++i) {
+        if (frames_sent.load(std::memory_order_acquire) >= target) {
+            return;
+        }
+        if (!gadget_running || !running) {
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
 std::array<uint8_t, 13> GamepadDevice::BuildHIDReport() {
     std::lock_guard<std::mutex> lock(state_mutex);
 
@@ -520,7 +549,9 @@ std::array<uint8_t, 13> GamepadDevice::BuildHIDReport() {
 
 void GamepadDevice::SendGadgetReport() {
     auto report_data = BuildHIDReport();
-    WriteHIDBlocking(report_data.data(), report_data.size());
+    if (WriteHIDBlocking(report_data.data(), report_data.size())) {
+        frames_sent.fetch_add(1, std::memory_order_acq_rel);
+    }
 }
 
 bool GamepadDevice::WriteHIDBlocking(const uint8_t* data, size_t size) {
@@ -585,8 +616,9 @@ void GamepadDevice::USBGadgetPollingThread() {
             warmup = true;
             warmup_frames.fetch_sub(1, std::memory_order_acq_rel);
         }
+        bool allow_output = output_enabled.load(std::memory_order_acquire);
         lock.unlock();
-        if (should_send || warmup) {
+        if (allow_output && (should_send || warmup)) {
             SendGadgetReport();
         }
         lock.lock();
@@ -662,7 +694,9 @@ void GamepadDevice::ReadGadgetOutput() {
             offset += chunk;
 
             if (gadget_output_pending_len == kFFBPacketSize) {
-                ParseFFBCommand(gadget_output_pending.data(), kFFBPacketSize);
+                if (output_enabled.load(std::memory_order_acquire)) {
+                    ParseFFBCommand(gadget_output_pending.data(), kFFBPacketSize);
+                }
                 gadget_output_pending_len = 0;
             }
         }
@@ -679,6 +713,12 @@ void GamepadDevice::FFBUpdateThread() {
         ffb_cv.wait_for(lock, std::chrono::milliseconds(1));
         if (!ffb_running || !running) {
             break;
+        }
+
+        if (!enabled || !output_enabled.load(std::memory_order_acquire)) {
+            lock.unlock();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
         }
 
         int16_t local_force = ffb_force;
@@ -751,6 +791,9 @@ void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
     }
 
     std::lock_guard<std::mutex> lock(state_mutex);
+    if (!enabled) {
+        return;
+    }
     bool state_changed = false;
 
     uint8_t cmd = data[0];

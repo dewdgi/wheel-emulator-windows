@@ -45,7 +45,9 @@ This document matches the current gadget-only implementation. Every subsystem de
 - `ToggleEnabled()` flips the `enabled` flag under the mutex, grabs/ungrabs input, calls `ResyncKeyStates()` (which is a no-op unless a new device arrived), reapplies whatever pedals/buttons are currently held via a single snapshot write, schedules the warmup burst, and logs the new mode so the host always sees a current frame when control changes.
 - `ProcessInputFrame()` consumes mouse delta plus the current keyboard snapshot in one lock-protected block, so every axis, button, and hat update lands in the same HID frame; there are no more per-axis NotifyStateChanged calls that could surface half-updated states.
 - `SendNeutral(reset_ffb)` injects a neutral frame and, unless we explicitly ask for a reset, preserves the force-feedback state so quickly toggling Ctrl+M no longer clears road feel.
+- `FlushStateBlocking()` waits for the HID writer to confirm a frame hit the wire (using a monotonic frame counter) so enable/disable transitions always deliver their neutral frame before output is muted.
 - Warmup burst: when we re-enable, `GamepadDevice` emits a few consecutive neutral frames followed by the freshly captured snapshot so ACC never sees half-pressed pedals or missing axes after a toggle.
+- `output_enabled` gates both HID IN and OUT: nothing is transmitted or parsed while disabled, and FFB physics sleeps until the toggle completes, preventing random packets from confusing the host.
 
 ### `src/config.cpp`
 - Reads `/etc/wheel-emulator.conf`. If missing, writes a documented default that matches the code (including the KEY_ENTER button 26 binding and clutch axis description).
@@ -134,7 +136,7 @@ All bindings are hardcoded in `GamepadDevice::UpdateButtons`. The README table m
 
 ## Lifecycle Guarantees
 
-- **Enable/Disable:** Ctrl+M sets `grab_desired`, forcing one refresh so the correct event nodes are open, issues `EVIOCGRAB`, keeps the aggregated key state alive even while ungrabbed, only resyncs hardware when `resync_pending` is set, writes a neutral frame followed immediately by the snapshot (`SendNeutral` + `ApplyCurrentInput`), runs a short warmup burst, and logs the new mode. This keeps modifiers responsive even if you hold Ctrl while toggling, auto-grabs newly hotplugged devices, avoids redundant ioctl spam during rapid toggles (100 Hz+ is fine), and guarantees games in input menus see fresh pedal data.
+- **Enable/Disable:** Ctrl+M sets `grab_desired`, forces a device refresh, issues `EVIOCGRAB`, keeps the aggregated key state alive even while ungrabbed, only resyncs hardware when `resync_pending` is set, sends and flushes a neutral frame (no other traffic occurs while output is muted), reapplies the freshly captured snapshot inside the same lock, schedules the warmup burst, and logs the mode change. FFB output is ignored until this sequence completes, so games never see half-initialized axes or stray torque packets, even if you toggle hundreds of times per second.
 - **Signal Safety:** All blocking syscalls in threads treat `EINTR` as retryable. The SIGINT handler only toggles `running` and writes a message, so shutdown is safe even if the gadget threads are mid-transfer.
 - **Hotplug Safety:** Each device’s `key_shadow` is flushed when the fd disconnects, releasing any held buttons so games never see stuck inputs after a keyboard unplug.
 

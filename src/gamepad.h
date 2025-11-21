@@ -43,6 +43,8 @@ enum class WheelButton : uint8_t {
 
 class GamepadDevice {
 public:
+    struct ControlSnapshot;
+
     GamepadDevice();
     ~GamepadDevice();
 
@@ -63,9 +65,10 @@ public:
     void ProcessInputFrame(int mouse_dx, int sensitivity, const Input& input);
     void SendNeutral(bool reset_ffb = true);
     void ApplyCurrentInput(const Input& input);
+    void ApplySnapshot(const ControlSnapshot& snapshot);
+    void FlushStateBlocking();
 
 private:
-    struct ControlSnapshot;
     void NotifyStateChanged();
     bool CreateUSBGadget();
     void DestroyUSBGadget();
@@ -94,6 +97,8 @@ private:
     std::atomic<bool> ffb_running;
     std::atomic<bool> state_dirty;
     std::atomic<int> warmup_frames;
+    std::atomic<bool> output_enabled;
+    std::atomic<uint64_t> frames_sent;
     std::mutex state_mutex;
     std::condition_variable state_cv;
     std::condition_variable ffb_cv;
