@@ -470,13 +470,13 @@ std::array<uint8_t, 13> GamepadDevice::BuildHIDReport() {
     report[2] = clutch_u & 0xFF;
     report[3] = (clutch_u >> 8) & 0xFF;
 
-    uint16_t brake_u = 65535 - static_cast<uint16_t>(brake * 655.35f);
-    report[4] = brake_u & 0xFF;
-    report[5] = (brake_u >> 8) & 0xFF;
-
     uint16_t throttle_u = 65535 - static_cast<uint16_t>(throttle * 655.35f);
-    report[6] = throttle_u & 0xFF;
-    report[7] = (throttle_u >> 8) & 0xFF;
+    report[4] = throttle_u & 0xFF;
+    report[5] = (throttle_u >> 8) & 0xFF;
+
+    uint16_t brake_u = 65535 - static_cast<uint16_t>(brake * 655.35f);
+    report[6] = brake_u & 0xFF;
+    report[7] = (brake_u >> 8) & 0xFF;
 
     uint8_t hat = 0x0F;
     if (dpad_y == -1 && dpad_x == 0) hat = 0;
