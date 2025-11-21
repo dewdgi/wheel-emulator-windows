@@ -533,7 +533,16 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
             return;
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (!WaitForHostReady()) {
+            std::cerr << "[GamepadDevice] Host never configured HID interface; disconnecting" << std::endl;
+            UnbindUDC();
+            input.Grab(false);
+            {
+                std::lock_guard<std::mutex> lock(state_mutex);
+                enabled = false;
+            }
+            return;
+        }
 
         if (!WriteReportBlocking(neutral_report) || !WriteReportBlocking(snapshot_report)) {
             std::cerr << "[GamepadDevice] Failed to prime HID reports; disconnecting" << std::endl;
@@ -810,6 +819,38 @@ bool GamepadDevice::WriteReportBlocking(const std::array<uint8_t, 13>& report) {
             if (flags >= 0 && !(flags & O_NONBLOCK)) {
                 fcntl(fd, F_SETFL, flags | O_NONBLOCK);
             }
+        }
+    }
+    return false;
+}
+
+bool GamepadDevice::WaitForHostReady(int timeout_ms) {
+    if (fd < 0) {
+        return false;
+    }
+
+    int waited = 0;
+    while (waited < timeout_ms && running) {
+        int window = std::min(25, timeout_ms - waited);
+        pollfd p{};
+        p.fd = fd;
+        p.events = POLLOUT;
+        p.revents = 0;
+        int ret = poll(&p, 1, window);
+        if (ret > 0) {
+            if (p.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                return false;
+            }
+            if (p.revents & POLLOUT) {
+                return true;
+            }
+        } else if (ret == 0) {
+            waited += window;
+            continue;
+        } else if (errno == EINTR) {
+            continue;
+        } else {
+            return false;
         }
     }
     return false;
