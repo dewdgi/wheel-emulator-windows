@@ -164,12 +164,7 @@ void GamepadDevice::ShutdownThreads() {
     state_cv.notify_all();
     ffb_cv.notify_all();
 
-    if (gadget_thread.joinable()) {
-        gadget_thread.join();
-    }
-    if (gadget_output_thread.joinable()) {
-        gadget_output_thread.join();
-    }
+    StopGadgetThreads();
     if (ffb_thread.joinable()) {
         ffb_thread.join();
     }
@@ -190,15 +185,10 @@ bool GamepadDevice::Create() {
         return false;
     }
 
-    gadget_running = true;
-    gadget_thread = std::thread(&GamepadDevice::USBGadgetPollingThread, this);
-    gadget_output_running = true;
-    gadget_output_thread = std::thread(&GamepadDevice::USBGadgetOutputThread, this);
     ffb_running = true;
     ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
 
     SendNeutral(true);
-    UnbindUDC();
     return true;
 }
 
@@ -354,12 +344,23 @@ bool GamepadDevice::BindUDC() {
             return false;
         }
     }
+    if (fd < 0) {
+        fd = open(kHidDevice, O_RDWR | O_NONBLOCK);
+        if (fd < 0) {
+            std::cerr << "[GamepadDevice] Failed to open " << kHidDevice << " before binding" << std::endl;
+            return false;
+        }
+    }
+
     if (!WriteStringToFile(GadgetUDCPath(), udc_name)) {
         std::cerr << "[GamepadDevice] Failed to bind UDC '" << udc_name << "'" << std::endl;
+        close(fd);
+        fd = -1;
         return false;
     }
     udc_bound = true;
     std::cout << "[GamepadDevice] Bound UDC '" << udc_name << "'" << std::endl;
+    EnsureGadgetThreadsStarted();
     return true;
 }
 
@@ -373,8 +374,36 @@ bool GamepadDevice::UnbindUDC() {
         return false;
     }
     udc_bound = false;
+    StopGadgetThreads();
     std::cout << "[GamepadDevice] Unbound UDC" << std::endl;
     return true;
+}
+
+void GamepadDevice::EnsureGadgetThreadsStarted() {
+    if (!gadget_running) {
+        gadget_running = true;
+        gadget_thread = std::thread(&GamepadDevice::USBGadgetPollingThread, this);
+    }
+    if (!gadget_output_running) {
+        gadget_output_running = true;
+        gadget_output_thread = std::thread(&GamepadDevice::USBGadgetOutputThread, this);
+    }
+}
+
+void GamepadDevice::StopGadgetThreads() {
+    if (gadget_running) {
+        gadget_running = false;
+        state_cv.notify_all();
+    }
+    if (gadget_output_running) {
+        gadget_output_running = false;
+    }
+    if (gadget_thread.joinable()) {
+        gadget_thread.join();
+    }
+    if (gadget_output_thread.joinable()) {
+        gadget_output_thread.join();
+    }
 }
 
 bool GamepadDevice::IsEnabled() {
@@ -743,14 +772,24 @@ bool GamepadDevice::WriteHIDBlocking(const uint8_t* data, size_t size) {
 }
 
 bool GamepadDevice::WriteReportBlocking(const std::array<uint8_t, 13>& report) {
-    if (fd < 0) {
-        return false;
+    constexpr int kMaxAttempts = 3;
+    for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+        if (fd >= 0 && WriteHIDBlocking(report.data(), report.size())) {
+            return true;
+        }
+        std::cerr << "[GamepadDevice] Failed to write HID report (attempt " << (attempt + 1)
+                  << ")" << std::endl;
+        if (fd >= 0) {
+            close(fd);
+            fd = -1;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        fd = open(kHidDevice, O_RDWR | O_NONBLOCK);
+        if (fd < 0) {
+            break;
+        }
     }
-    if (!WriteHIDBlocking(report.data(), report.size())) {
-        std::cerr << "[GamepadDevice] Failed to write HID report" << std::endl;
-        return false;
-    }
-    return true;
+    return false;
 }
 
 void GamepadDevice::USBGadgetPollingThread() {

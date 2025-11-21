@@ -93,6 +93,8 @@ private:
     bool UnbindUDC();
     std::string GadgetUDCPath() const;
     std::string DetectFirstUDC() const;
+    void EnsureGadgetThreadsStarted();
+    void StopGadgetThreads();
 
     int fd;
     std::thread gadget_thread;
