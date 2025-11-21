@@ -1,6 +1,7 @@
 // Improved toggle: allow either Ctrl key, and tolerate quick presses
 #include "input.h"
 #include <iostream>
+#include <algorithm>
 #include <cerrno>
 #include <fcntl.h>
 #include <sys/ioctl.h>
@@ -425,6 +426,44 @@ void Input::Grab(bool enable) {
             dev.grabbed = false;
         }
     }
+}
+
+void Input::ResyncKeyStates() {
+    memset(keys, 0, sizeof(keys));
+    memset(key_counts, 0, sizeof(key_counts));
+
+    for (auto& dev : devices) {
+        if (dev.fd < 0 || !dev.keyboard_capable) {
+            if (!dev.key_shadow.empty()) {
+                std::fill(dev.key_shadow.begin(), dev.key_shadow.end(), 0);
+            }
+            continue;
+        }
+
+        if (dev.key_shadow.empty()) {
+            dev.key_shadow.assign(KEY_MAX, 0);
+        } else {
+            std::fill(dev.key_shadow.begin(), dev.key_shadow.end(), 0);
+        }
+
+        unsigned long key_bits[NBITS(KEY_MAX)] = {0};
+        if (ioctl(dev.fd, EVIOCGKEY(sizeof(key_bits)), key_bits) < 0) {
+            continue;
+        }
+
+        for (int code = 0; code < KEY_MAX; ++code) {
+            if (test_bit(code, key_bits)) {
+                dev.key_shadow[code] = 1;
+                key_counts[code]++;
+            }
+        }
+    }
+
+    for (int code = 0; code < KEY_MAX; ++code) {
+        keys[code] = key_counts[code] > 0;
+    }
+
+    prev_toggle = (keys[KEY_LEFTCTRL] || keys[KEY_RIGHTCTRL]) && keys[KEY_M];
 }
 
 bool Input::IsKeyPressed(int keycode) const {

@@ -34,6 +34,7 @@ This document matches the current gadget-only implementation. Every subsystem de
 - Implements `WaitForEvents(timeout_ms)` via `poll`, so the main loop sleeps until activity or timeout.
 - Aggregates key presses into `keys[KEY_MAX]`, accumulates mouse X delta, and exposes `IsKeyPressed(keycode)` lookups.
 - `Grab(bool)` issues `EVIOCGRAB` for exclusive access while the emulator is enabled. Keyboard state stays intact across toggles so modifier chords survive rapid Ctrl+M presses, and per-device `key_shadow` data is automatically released if a device disconnects.
+- `ResyncKeyStates()` queries `EVIOCGKEY` on every keyboard device right after grabbing so the aggregated key array matches the hardware’s real state (no stuck throttle/brake if you release keys while the emulator is disabled).
 
 ### `src/gamepad.cpp`
 - Holds the canonical wheel state behind `state_mutex`: steering, user steering, FFB offset/velocity, three pedals, D-pad axes, 26 button bits, enable flag, and FFB parameters.
