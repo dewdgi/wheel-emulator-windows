@@ -472,6 +472,7 @@ GamepadDevice::ControlSnapshot GamepadDevice::CaptureSnapshot(const Input& input
 }
 
 void GamepadDevice::SetEnabled(bool enable, Input& input) {
+    std::unique_lock<std::mutex> enable_lock(enable_mutex);
     bool changed = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex);
@@ -530,6 +531,17 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
                 enabled = false;
             }
             input.Grab(false);
+            return;
+        }
+
+        if (!WaitForEndpointReady()) {
+            std::cerr << "[GamepadDevice] HID endpoint never became ready; disconnecting" << std::endl;
+            UnbindUDC();
+            input.Grab(false);
+            {
+                std::lock_guard<std::mutex> lock(state_mutex);
+                enabled = false;
+            }
             return;
         }
 
@@ -828,6 +840,42 @@ bool GamepadDevice::WriteReportBlocking(const std::array<uint8_t, 13>& report) {
             if (flags >= 0 && !(flags & O_NONBLOCK)) {
                 fcntl(fd, F_SETFL, flags | O_NONBLOCK);
             }
+        }
+    }
+    return false;
+}
+
+bool GamepadDevice::WaitForEndpointReady(int timeout_ms) {
+    if (fd < 0) {
+        return false;
+    }
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    while (running && std::chrono::steady_clock::now() < deadline) {
+        pollfd p{};
+        p.fd = fd;
+        p.events = POLLOUT;
+        p.revents = 0;
+        int remaining = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count());
+        if (remaining < 5) {
+            remaining = 5;
+        } else if (remaining > 50) {
+            remaining = 50;
+        }
+        int ret = poll(&p, 1, remaining);
+        if (ret > 0) {
+            if (p.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                return false;
+            }
+            if (p.revents & POLLOUT) {
+                return true;
+            }
+        } else if (ret == 0) {
+            continue;
+        } else if (errno == EINTR) {
+            continue;
+        } else {
+            return false;
         }
     }
     return false;

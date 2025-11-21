@@ -89,6 +89,7 @@ private:
     uint32_t BuildButtonBitsLocked() const;
     bool WriteHIDBlocking(const uint8_t* data, size_t size);
     bool WriteReportBlocking(const std::array<uint8_t, 13>& report);
+    bool WaitForEndpointReady(int timeout_ms = 1500);
     bool BindUDC();
     bool UnbindUDC();
     std::string GadgetUDCPath() const;
@@ -107,6 +108,7 @@ private:
     std::atomic<int> warmup_frames;
     std::atomic<bool> output_enabled;
     std::mutex gadget_mutex;
+    std::mutex enable_mutex;
     bool udc_bound;
     std::string udc_name;
     std::mutex state_mutex;
