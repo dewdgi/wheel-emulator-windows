@@ -58,13 +58,14 @@ bool DeviceSupportsMouse(int fd) {
 }
 }
 
-Input::Input() : prev_toggle(false), resync_pending(true) {
+Input::Input() : resync_pending(true), prev_toggle(false) {
     memset(keys, 0, sizeof(keys));
     memset(key_counts, 0, sizeof(key_counts));
     last_scan = std::chrono::steady_clock::time_point::min();
     last_input_activity = std::chrono::steady_clock::time_point::min();
     last_keyboard_error = std::chrono::steady_clock::time_point::min();
     last_mouse_error = std::chrono::steady_clock::time_point::min();
+    last_grab_log = std::chrono::steady_clock::time_point::min();
 }
 
 Input::~Input() {
@@ -411,7 +412,6 @@ bool Input::CheckToggle() {
 }
 
 void Input::Grab(bool enable) {
-    RefreshDevices();
     int grab = enable ? 1 : 0;
     int changed = 0;
     for (auto& dev : devices) {
@@ -445,7 +445,7 @@ void Input::Grab(bool enable) {
         }
     }
 
-    if (changed > 0) {
+    if (changed > 0 && ShouldLogAgain(last_grab_log)) {
         std::cout << (enable ? "Grabbed " : "Released ")
                   << changed << " device" << (changed == 1 ? "" : "s")
                   << std::endl;

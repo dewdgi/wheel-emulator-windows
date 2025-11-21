@@ -287,7 +287,6 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
 
     input.Grab(enable);
     if (enable) {
-        input.MarkResyncNeeded();
         input.ResyncKeyStates();
         SendNeutral(false);
         ApplyInputSnapshot(input);

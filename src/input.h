@@ -63,6 +63,7 @@ private:
     std::chrono::steady_clock::time_point last_input_activity;
     std::chrono::steady_clock::time_point last_keyboard_error;
     std::chrono::steady_clock::time_point last_mouse_error;
+    std::chrono::steady_clock::time_point last_grab_log;
     bool resync_pending;
     bool keys[KEY_MAX];
     int key_counts[KEY_MAX];
