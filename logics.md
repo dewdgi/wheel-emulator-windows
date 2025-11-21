@@ -17,7 +17,7 @@ This document matches the current gadget-only implementation. Every subsystem de
    - The gadget OUTPUT thread parses 7-byte OUTPUT reports for FFB, waking the physics loop as soon as torque data arrives.
 3. **Shutdown**
    - Ctrl+C flips the global `running` flag, unblocks every condition variable, and joins all threads.
-   - `GamepadDevice::DestroyUSBGadget()` unbinds the UDC and removes the ConfigFS tree so no stale devices remain.
+   - The gadget is left intact (neutral frame already sent) so a subsequent `./wheel-emulator` run simply reuses `g29wheel` and its previously bound UDC without re-creating descriptors. Manually remove it with `echo '' | sudo tee /sys/kernel/config/usb_gadget/g29wheel/UDC` followed by deleting the gadget directory if you truly need a clean slate.
 
 ---
 
@@ -68,87 +68,163 @@ Because UHID/uinput is gone, failure to create the gadget is fatal and surfaces 
 
 ---
 
-## Thread Model (All reference `running` and per-thread atomics)
+## Persistent Gadget Lifecycle
 
-| Thread | Entry Point | Purpose | Notes |
-|--------|-------------|---------|-------|
-| Main | `main()` loop | Poll input, update state, request report send | Calls into `Input` & `GamepadDevice` synchronously |
-| Gadget Writer | `USBGadgetPollingThread()` | Sole HID IN writer | Waits on `state_cv`, honors `state_dirty` flag |
-| Gadget OUTPUT | `USBGadgetOutputThread()` | Reads 7-byte OUTPUT frames | Feeds `ParseFFBCommand`, tolerates partial reads |
-| FFB Physics | `FFBUpdateThread()` | Shapes torque, updates offsets | 125 Hz loop with damping/+gain math |
+- `GamepadDevice::CreateUSBGadget()` always searches for the existing `g29wheel` tree before creating anything. If the descriptor, hid function, and config are already present from a previous run, it simply reuses them and just reopens `/dev/hidg0`.
+- The gadget stays on disk even after you kill the emulator. When the process exits it releases file descriptors and threads but intentionally leaves ConfigFS entries in place so the very next launch binds instantly and the host keeps seeing the exact same VID/PID/serial combination.
+- Enable/disable toggles (`Ctrl+M`) never destroy the gadget. Disabling merely unbinds the UDC, sends a neutral frame, and releases input grabs so the host experiences a clean unplug; re-enabling binds the same gadget again a few milliseconds later.
+- If you truly need to remove the gadget (for example before loading a different USB gadget stack), run:
 
-Synchronization is limited to `state_mutex` (covers everything serialized into HID reports and the enable flag) plus `state_cv`/`ffb_cv` for thread wakeups. No other locks exist, so there are no ordering surprises.
+   ```bash
+   echo '' | sudo tee /sys/kernel/config/usb_gadget/g29wheel/UDC
+   sudo rm -rf /sys/kernel/config/usb_gadget/g29wheel
+   ```
 
----
+   ## Wheel HID Emulator Logic (November 2025)
 
-## HID State Layout
+   This document reflects the current USB-gadget-only implementation. UHID/uinput paths are gone, so everything below assumes a ConfigFS-capable kernel exposing `/dev/hidg0`.
 
-`BuildHIDReport()` produces the exact 13-byte payload expected by the kernel `hid-lg` driver:
+   ---
 
-1. Bytes 0–1: ABS_X steering (signed 16-bit shifted into unsigned space).
-2. Bytes 2–3: ABS_Y clutch (KEY_A). Value is `65535 - clutch_pct * 655.35` so it rests at 65535 like the real G29.
-3. Bytes 4–5: ABS_Z throttle (KEY_W) inverted the same way.
-4. Bytes 6–7: ABS_RZ brake (KEY_S) inverted.
-5. Byte 8 (low nibble): HAT encoded from arrow keys; high nibble padded.
-6. Bytes 9–12: 26 button bits packed little-endian. Button order matches Logitech’s enumeration and the comments in `config.cpp` / README.
+   ## Runtime Flow
 
-`SendNeutral()` zeros the analog fields, hats, and buttons before notifying the gadget thread, ensuring graceful enable/disable and shutdown flows.
+   ### 1. Startup
+   - `main.cpp` refuses to run unless the process is root, installs the SIGINT handler, and loads `/etc/wheel-emulator.conf`.
+   - `GamepadDevice::Create()` creates or reuses the `g29wheel` gadget tree, binds the first available UDC immediately, opens `/dev/hidg0`, primes a neutral HID frame, and launches the three helper threads (`USBGadgetPollingThread`, `USBGadgetOutputThread`, `FFBUpdateThread`).
+   - `Input` discovers keyboard/mouse devices (with optional overrides) and marks itself ready for toggling.
 
----
+   ### 2. Main Loop
+   - Sleeps up to 8 ms via `Input::WaitForEvents`, then drains every device with `Input::Read`, which aggregates key state and mouse deltas.
+   - Detects Ctrl+M with `Input::CheckToggle`; loss of a grabbed keyboard/mouse triggers a forced `SetEnabled(false)` so the host sees neutral data.
+   - When enabled, `GamepadDevice::ProcessInputFrame` captures a snapshot, applies steering deltas scaled by `sensitivity`, and sets `state_dirty` so the gadget writer pushes a new 13-byte report.
+   - The loop still tracks a `dt` value (clamped 0–50 ms) for future smoothing work, but the current build does not feed it anywhere else.
 
-## Force Feedback Pipeline
+   ### 3. Shutdown
+   - SIGINT flips `running=false`. The main loop disables the emulator, wakes every condition variable, joins helper threads, and releases any grabs.
+   - The ConfigFS gadget is left in place and remains bound, already holding a neutral HID frame. A subsequent launch simply reopens `/dev/hidg0` and resumes streaming.
+   - Manual cleanup (only if you need to unload the gadget) requires echoing an empty string into `/sys/kernel/config/usb_gadget/g29wheel/UDC` and deleting the directory, mirroring `DestroyUSBGadget()`.
 
-1. Host driver sends 7-byte OUTPUT packets (constant force, stop, autocenter, etc.).
-2. `ParseFFBCommand()` decodes opcodes (0x11, 0x13, 0x14, 0xf5, 0xfe, 0xf8…) and updates `ffb_force` or `ffb_autocenter` under the mutex.
-3. `ffb_cv.notify_all()` wakes the physics loop immediately after a state change.
-4. Physics loop runs at ~125 Hz:
-   - Shapes the raw force via `ShapeFFBTorque()` (softens low amplitudes, prevents saturation).
-   - Blends in autocenter springs.
-   - Applies config gain and a critically damped spring-mass model (stiffness 120, damping 8, offset clamp ±22 k).
-   - Calls `ApplySteeringLocked()` to merge user input (mouse) and FFB offset, clamping to the ±32768 HID range.
-5. If steering changed, `state_dirty` flips true so the gadget writer pushes a new frame instantly.
+   ---
 
----
+   ## Major Modules
 
-## Controls & Mapping
+   ### `src/main.cpp`
+   - Wires together config loading, gadget creation, input discovery, and the Ctrl+M toggle.
+   - Calls `Input::WaitForEvents`, `Input::Read`, `Input::CheckToggle`, and `GamepadDevice::ProcessInputFrame` on every loop iteration.
+   - On exit, forces `SetEnabled(false)`, wakes helper threads (`notify_all_shutdown`), runs `ShutdownThreads`, and releases all grabs.
 
-| Control | Source | HID Field |
-|---------|--------|-----------|
-| Steering | Mouse X delta | ABS_X |
-| Throttle | `KEY_W` | ABS_Z (inverted) |
-| Brake | `KEY_S` | ABS_RZ (inverted) |
-| Clutch | `KEY_A` | ABS_Y (inverted) |
-| D-Pad | Arrow keys | ABS_HAT0X/ABS_HAT0Y |
-| Buttons | `Q,E,F,G,H,R,T,Y,U,I,O,P,1,2,3,4,5,6,7,8,9,0,LeftShift,Space,Tab,Enter` | 26 button bits |
+   ### `src/input.cpp`
+   - Keeps a list of `/dev/input/event*` handles with capability flags, grab state, and per-device `key_shadow` buffers so multiple keyboards can drive the same logical key.
+   - `DiscoverKeyboard`/`DiscoverMouse` optionally pin devices; otherwise `RefreshDevices` auto-scans when idle and hotplugs new hardware mid-run.
+   - `Read` drains each fd (up to 256 events per pass), coalesces REL_X into `mouse_dx`, maintains reference-counted `keys[KEY_MAX]`, and timestamps activity to avoid scanning while the user is typing.
+   - `Grab(true)` issues `EVIOCGRAB` on every capable device, aborts if either class cannot be grabbed, and releases everything on failure so the host never keeps a half-grabbed input.
+   - `ResyncKeyStates` uses `EVIOCGKEY` only when `resync_pending` is set (triggered by new keyboards or overrides) so steady toggles stay cheap.
+   - `CheckToggle` fires once per Ctrl+M press even if both keys stay held, thanks to `prev_toggle` edge tracking.
+   - `AllRequiredGrabbed` ensures both keyboard and mouse are locked before streaming; losing either forces a disable in `main`.
 
-All bindings are hardcoded in `GamepadDevice::UpdateButtons`. The README table mirrors these keys, including the new Enter binding for button 26.
+   ### `src/gamepad.cpp`
+   - Owns the canonical wheel state (`state_mutex` protects steering, three pedals, hat, 26 buttons, FFB offset/velocity, and the enabled flag).
+   - `CreateUSBGadget` loads `libcomposite`/`dummy_hcd` (best-effort), mounts ConfigFS if needed, builds the Logitech descriptor, sets strings/IDs, links `hid.usb0` into `configs/c.1`, binds the UDC immediately, and opens `/dev/hidg0`.
+   - Enabling: `SetEnabled(true)` grabs input, resyncs keys if necessary, captures a snapshot, temporarily forces `output_enabled=false`, applies a neutral state (without resetting FFB), builds neutral + snapshot reports, waits for the gadget endpoint to become writable, writes both reports synchronously, ensures gadget threads are running, then flips `output_enabled=true` and schedules 25 warmup frames.
+   - Disabling: `SetEnabled(false)` stops warmup/output, applies a neutral state with FFB reset, writes that report via `WriteReportBlocking`, and releases the grab. The gadget stays bound, so the OS keeps seeing a neutral Logitech wheel instead of a USB disconnect.
+   - `ProcessInputFrame` short-circuits unless both `enabled` and `output_enabled` are true, ensuring no state mutation happens mid-handshake.
+   - `USBGadgetPollingThread` is the sole HID IN writer. It watches `state_dirty` and `warmup_frames`, serializes a 13-byte report (`BuildHIDReportLocked`), and uses `WriteHIDBlocking` with back-off/reopen logic for transient EPIPE/ESHUTDOWN errors.
+   - `USBGadgetOutputThread` drains `/dev/hidg0` into 7-byte packets, honoring `output_enabled` before forwarding them to `ParseFFBCommand`.
+   - `FFBUpdateThread` runs at ~125 Hz, filters force, blends autocenter springs, applies the critically damped model (stiffness 120, damping 8, ±22 k offset clamp), and nudges steering through `ApplySteeringLocked` so USB reports always combine user input with FFB torque.
+   - `DestroyUSBGadget()` still exists for manual cleanup but is no longer invoked during normal shutdown.
 
----
+   ### `src/config.cpp`
+   - Loads `/etc/wheel-emulator.conf`, generating a documented default if the file is missing.
+   - Supported keys: `[devices] keyboard/mouse`, `[sensitivity] sensitivity` (clamped 1–100), `[ffb] gain` (0.1–4.0). `[button_mapping]` entries are reference-only; actual bindings stay hardcoded.
+   - `SaveDefault` spells out axes, inverted pedals, button usage, and the Ctrl+M toggle so the file doubles as user-facing documentation.
 
-## Configuration Impact
+   ---
 
-- `sensitivity` (1–100, default 50) scales mouse deltas by `sensitivity * 0.05` and clamps per-frame contributions to ±2000 counts so a runaway mouse cannot saturate the axis in one tick.
-- `gain` (0.1–4.0, default 0.3) multiplies the torque target within the FFB loop; clamped inside `SetFFBGain()` to protect stability.
-- Device overrides allow deterministic keyboard/mouse selection; leaving either empty keeps hotplug discovery active for that class.
+   ## USB Gadget Lifecycle
+   - The first launch builds the `g29wheel` ConfigFS tree, binds a UDC, and writes the Logitech descriptor. Subsequent launches reuse the exact same directory, UDC binding, VID/PID, and serial, which keeps games from re-learning devices.
+   - Because the gadget stays bound even when the emulator is disabled or exited, the host always sees a stable Logitech wheel identity. Toggling only starts/stops streaming data.
+   - Manual teardown (before unplugging modules or switching gadget stacks) requires:
 
-`SaveDefault()` now describes the clutch axis, inverted pedals, and all 26 buttons (including KEY_ENTER). This keeps `/etc/wheel-emulator.conf` aligned with the executable without requiring the user to inspect code.
+     ```bash
+     echo '' | sudo tee /sys/kernel/config/usb_gadget/g29wheel/UDC
+     sudo rm -rf /sys/kernel/config/usb_gadget/g29wheel
+     ```
 
----
+     This mirrors `GamepadDevice::DestroyUSBGadget()` if you ever need to invoke it from inside the codebase.
 
-## Lifecycle Guarantees
+   ---
 
-- **Enable/Disable:** Ctrl+M sets `grab_desired`, forces a device refresh, tries to grab both keyboard and mouse (failure aborts immediately), keeps the aggregated key state alive even while ungrabbed, only resyncs hardware when `resync_pending` is set, stages neutral + snapshot frames, binds the UDC (physically “plugs in” the wheel), writes the neutral frame, writes the snapshot, then enables the async writer and schedules the warmup burst. Disabling (or any device loss) writes a neutral frame, unbinds the UDC (host sees a disconnect), and releases the grabs. FFB output and gadget OUTPUT parsing stay muted the entire time so there’s never a stray torque packet.
-- **Signal Safety:** All blocking syscalls in threads treat `EINTR` as retryable. The SIGINT handler only toggles `running` and writes a message, so shutdown is safe even if the gadget threads are mid-transfer.
-- **Hotplug Safety:** Each device’s `key_shadow` is flushed when the fd disconnects, releasing any held buttons so games never see stuck inputs after a keyboard unplug.
+   ## Enable/Disable Handshake
+   1. **Enable path (`SetEnabled(true)`):** grab keyboard/mouse → resync keys if pending → capture a snapshot of every axis/button → zero `output_enabled`, `warmup_frames`, and `state_dirty` → apply neutral (without resetting FFB) and build its report → apply the snapshot and build its report → ensure the gadget endpoint is writable (`WaitForEndpointReady`) → write neutral then snapshot via `WriteReportBlocking` → start gadget threads if they were stopped → set `output_enabled=true`, `warmup_frames=25`, and wake `state_cv` so the asynchronous writer begins streaming.
+   2. **Disable path (`SetEnabled(false)`):** stop warmup/output, set `state_dirty=false` → apply neutral with FFB reset → write that report synchronously → release all grabs. The UDC remains bound; games keep seeing a neutral G29 instead of a hotplug event.
+   3. `main` also forces `SetEnabled(false)` if `Input::AllRequiredGrabbed()` drops to false, preventing half-updated reports when a device vanishes.
 
----
+   ---
 
-## Troubleshooting Hooks
+   ## Thread Model
 
-- **ConfigFS cleanup:** rerunning the emulator always tears down/rebuilds the gadget tree (`DestroyUSBGadget()` mirrors the setup routine). If a crash leaves artifacts behind, manually echo an empty string into `/sys/kernel/config/usb_gadget/g29wheel/UDC` and remove the directories just like the code’s cleanup routine.
-- `GamepadDevice::Create()` prints detailed guidance (ConfigFS mount, libcomposite, dummy_hcd, UDC availability) for the only supported backend: USB gadget.
-- `lsusb` should show `046d:c24f` whenever the gadget is enabled. If not, repeat the ConfigFS cleanup sequence above or ensure a hardware/virtual UDC is loaded.
+   | Thread | Entry Point | Purpose | Notes |
+   |--------|-------------|---------|-------|
+   | Main | `main()` | Polls input, detects toggles, calls `ProcessInputFrame` | Also watches for device loss and handles shutdown |
+   | Gadget Writer | `USBGadgetPollingThread()` | Sole HID IN writer | Sends frames when `state_dirty` or `warmup_frames` are set and `output_enabled` is true |
+   | Gadget OUTPUT | `USBGadgetOutputThread()` | Reads 7-byte OUTPUT packets | Reassembles partial reads, feeds `ParseFFBCommand`, obeys `output_enabled` |
+   | FFB Physics | `FFBUpdateThread()` | Computes torque offset | 125 Hz loop with damping, clamps, and `ApplySteeringLocked` |
 
----
+   `state_mutex` protects shared state, while `state_cv`/`ffb_cv` provide wakeups. No other locks exist, so ordering is easy to reason about.
 
-**Last verified:** November 2025 — matches commit where UHID/uinput fallbacks were deleted and KEY_ENTER became button 26. Keep this document in sync whenever bindings, threads, or gadget prerequisites change.
+   ---
+
+   ## HID Report Layout
+   - `BuildHIDReportLocked()` outputs 13 bytes matching Logitech’s descriptor:
+     1. Bytes 0–1: steering (ABS_X) signed 16-bit offset by +32768.
+     2. Bytes 2–3: clutch (ABS_Y) inverted so rest=65535, pressed≈0.
+     3. Bytes 4–5: throttle (ABS_Z) inverted.
+     4. Bytes 6–7: brake (ABS_RZ) inverted.
+     5. Byte 8 low nibble: D-pad encoded into the standard 0–7 hat values (0x0F when idle).
+     6. Bytes 9–12: 26 little-endian button bits following Logitech’s order.
+   - `SendNeutral(reset_ffb)` zeros axes, hat, and buttons, optionally clearing the FFB offset, and wakes the gadget writer so the host always receives a clean frame after a toggle or shutdown.
+
+   ---
+
+   ## Force Feedback Pipeline
+   1. The host driver writes 7-byte OUTPUT reports over interface 0. `USBGadgetOutputThread` buffers them until it has one full packet.
+   2. `ParseFFBCommand` handles the standard Logitech opcodes: 0x11 constant force slot, 0x13 stop, 0x14 enable autocenter, 0xf5 disable autocenter, 0xfe configure autocenter strength, 0xf8 extended commands (LEDs, range, etc.).
+   3. Any change wakes `FFBUpdateThread` through `ffb_cv`.
+   4. `FFBUpdateThread` runs ~125 Hz, clamps `dt` to 0.01 s, shapes torque (`ShapeFFBTorque`), adds autocenter torque, multiplies by `ffb_gain`, feeds the damped spring-mass model (stiffness 120, damping 8, velocity clamp 90 k/s, offset clamp ±22 k), and stores the latest `ffb_offset`/`ffb_velocity`.
+   5. If applying the offset changes steering, `state_dirty` becomes true and the gadget writer immediately emits a new HID frame so games feel the torque without waiting for additional input.
+
+   ---
+
+   ## Controls & Mapping
+
+   | Control | Input Source | HID Field |
+   |---------|--------------|-----------|
+   | Steering | Mouse X delta | ABS_X |
+   | Throttle | `KEY_W` | ABS_Z (inverted) |
+   | Brake | `KEY_S` | ABS_RZ (inverted) |
+   | Clutch | `KEY_A` | ABS_Y (inverted) |
+   | D-pad | Arrow keys | ABS_HAT0X / ABS_HAT0Y |
+   | Buttons 1–26 | `Q,E,F,G,H,R,T,Y,U,I,O,P,1,2,3,4,5,6,7,8,9,0,LeftShift,Space,Tab,Enter` | Packed little-endian |
+
+   Bindings are hardcoded in `CaptureSnapshot` / `ApplySnapshotLocked`. README lists the same table for quick reference.
+
+   ---
+
+   ## Configuration & Tuning
+   - `[devices] keyboard/mouse`: leave blank for hotplug auto-detect or set to `/dev/input/eventX` paths to pin devices.
+   - `[sensitivity] sensitivity`: integer 1–100. `ApplySteeringDeltaLocked` multiplies mouse delta by `sensitivity * 0.05` and clamps per-frame changes to ±2000 counts before clamping steering to ±32767.
+   - `[ffb] gain`: floating point 0.1–4.0. Both the config parser and `SetFFBGain` clamp it to keep the physics loop stable. Higher values make the wheel feel heavier.
+   - `[button_mapping]` is informational. Actual bindings live in code; the config section helps users remember what key drives each Logitech button.
+
+   ---
+
+   ## Reliability & Troubleshooting
+   - Losing a grabbed keyboard or mouse while enabled logs an error and forces `SetEnabled(false)`, ensuring the host never receives half-updated frames.
+   - `Input::ReleaseDeviceKeys` clears every pressed key when a device disappears, so games do not see stuck buttons after an unplug.
+   - `GamepadDevice::Create()` prints actionable errors (ConfigFS mount, libcomposite, dummy_hcd, missing UDC) whenever gadget creation fails.
+   - Verify enumeration with `lsusb | grep 046d:c24f`. The device should be present even when the emulator is “disabled” because the gadget remains bound and neutral.
+   - To completely remove the gadget (e.g., before loading another gadget stack), run the manual cleanup commands shown above or call `DestroyUSBGadget()` from code.
+
+   ---
+
+   **Last verified:** November 2025 — matches the commit where UHID/uinput were removed, KEY_ENTER became button 26, and the gadget remains bound across toggles and process restarts. Keep this document in sync whenever bindings, gadget sequencing, or thread behavior change.

@@ -1,148 +1,100 @@
-
-# CURRENTLY COMPLETELY BROKEN WILL FIX LATER TODAY 11/21/2025
-
-
 # Wheel HID Emulator
 
-Transform a keyboard and mouse into a force-feedback Logitech G29 Racing Wheel on Linux. The emulator exposes a **real USB HID gadget** (VID `046d`, PID `c24f`) so games, Wine/Proton, and consoles see an authentic wheel.
+Turn a keyboard and mouse into a Logitech G29 racing wheel on Linux. The emulator exposes a real USB HID gadget so your system instantly recognizes it as a wheel without extra drivers. If you want to dive into the internals, check [`logics.md`](logics.md).
 
-## Highlights
+## Before You Start
 
-- Native USB gadget device on `/dev/hidg0` that enumerates exactly like a Logitech G29.
-- Force feedback physics loop (125 Hz) with Logitech-compatible OUTPUT report parsing.
-- Mouse X → steering, keyboard keys → pedals, clutch, 26 buttons, and D-pad.
-- Hotplug-aware input stack with Ctrl+M grab/ungrab toggle and Ctrl+C shutdown.
-- Snapshot + warmup path guarantees pedals/buttons return instantly after a toggle, while a single-lock frame builder keeps every axis/button update atomic even if you flip Ctrl+M 100× per second.
-- Configurable steering sensitivity and FFB gain via `/etc/wheel-emulator.conf`.
+- Linux kernel with `CONFIG_USB_CONFIGFS=y`, `libcomposite`, and either a hardware UDC or `dummy_hcd` for loopback testing.
+- Root privileges (required for ConfigFS operations, `/dev/hidg0`, and grabbing input devices).
+- g++ with C++17 support for building the binary.
 
-## Requirements
-
-| Requirement | Details |
-|-------------|---------|
-| Kernel      | `CONFIG_USB_CONFIGFS=y`, `libcomposite`, and either a hardware UDC or `dummy_hcd` for self-hosted testing |
-| Privileges  | Root (needed for ConfigFS operations, `/dev/hidg0`, and grabbing input devices) |
-| Toolchain   | g++ with C++17 support |
-
-## Build & Quick Start
+## Install & Run
 
 ```bash
-make
+make                # build the binary
+sudo make install   # optional: copy to /usr/local/bin
 
-# Optional: install system-wide (installs binary under /usr/local/bin)
-sudo make install
-
-# Load the gadget drivers (no-op if already present)
+# Ensure USB gadget support is ready (no-op if modules already loaded)
 sudo modprobe libcomposite
-sudo modprobe dummy_hcd   # only needed for USB gadget testing on the same PC
+sudo modprobe dummy_hcd   # only needed for self-hosted testing
 
-# Run the emulator
 sudo ./wheel-emulator
 ```
 
-Runtime controls:
-- **Ctrl+M** – toggle emulation on/off (grabs or releases keyboard/mouse). The combo is edge-triggered, so you can keep holding Ctrl and tap M rapidly without missing a transition.
-- **Ctrl+C** – exit cleanly, tearing down the ConfigFS gadget
-
-The toggle path refreshes device discovery once when you enable, auto-grabs anything discovered later, and only re-syncs key state when a new keyboard appears. Combined with the single-shot snapshot writer, even extremely fast enable/disable cycles keep the pedal state aligned with whatever you’re holding.
+What you should see:
+- The program creates/reuses the `g29wheel` gadget immediately and pushes a neutral frame, so the OS/game sees a Logitech wheel even before you enable input grabbing.
+- Press **Ctrl+M** to toggle emulation. When enabled the app grabs your keyboard/mouse and streams wheel data; when disabled it releases them but keeps the gadget alive in a neutral state.
+- Press **Ctrl+C** to exit. The gadget remains until you reboot or manually remove it (see troubleshooting).
 
 ## Controls & Mapping
 
-### Axes
+| Action | Input | HID Field |
+|--------|-------|-----------|
+| Steering | Mouse X movement | ABS_X |
+| Throttle | `W` | ABS_Z (inverted) |
+| Brake | `S` | ABS_RZ (inverted) |
+| Clutch | `A` | ABS_Y (inverted) |
+| D-Pad | Arrow keys | ABS_HAT0X/ABS_HAT0Y |
 
-| Action  | Input Source | HID Axis | Notes |
-|---------|--------------|----------|-------|
-| Steering | Mouse horizontal delta | ABS_X | Accumulates into ±32767, scaled by `sensitivity*0.05` |
-| Throttle | `W` key | ABS_Z | 0 % (released) to 100 % (held). Sent inverted (32767=rest) to match the real G29 |
-| Brake | `S` key | ABS_RZ | Same ramp/inversion as throttle |
-| Clutch | `A` key | ABS_Y | Same ramp/inversion as throttle |
-| D-Pad | Arrow keys | ABS_HAT0X/Y | 8-way hat synthesized from KEY_UP/DOWN/LEFT/RIGHT |
+| Button | Keyboard | Typical bind |
+|--------|----------|---------------|
+| South / Cross | Q | Downshift |
+| East / Circle | E | Upshift |
+| West / Square | F | Flash lights |
+| North / Triangle | G | Horn |
+| L1 | H | Lights toggle |
+| R1 | R | Camera right |
+| L2 | T | Telemetry |
+| R2 | Y | HUD cycle |
+| Select | U | Pit limiter |
+| Start | I | Ignition |
+| L3 | O | Wipers |
+| R3 | P | Pause |
+| PS / Mode | 1 | TC down |
+| Dead | 2 | TC up |
+| TH 1 | 3 | ABS down |
+| TH 2 | 4 | ABS up |
+| TH 3 | 5 | Brake bias fwd |
+| TH 4 | 6 | Brake bias back |
+| TH 5 | 7 | Engine map – |
+| TH 6 | 8 | Engine map + |
+| TH 7 | 9 | Pit request |
+| TH 8 | 0 | Leaderboard |
+| TH 9 | Left Shift | Camera left |
+| TH 10 | Space | Handbrake |
+| TH 11 | Tab | Cycle view |
+| TH 12 | Enter | Extra bind |
 
-### Buttons (26 total)
+Feel free to remap these inside your game—Linux will always report a Logitech G29.
 
-| Logitech Button | Keyboard Key | Typical Use (suggestion) |
-|-----------------|--------------|--------------------------|
-| South (Cross)         | Q | Downshift |
-| East (Circle)         | E | Upshift |
-| West (Square)         | F | Flash/high beams |
-| North (Triangle)      | G | Horn |
-| L1                    | H | Lights toggle |
-| R1                    | R | Camera right |
-| L2                    | T | Telemetry |
-| R2                    | Y | HUD cycle |
-| Select (Share)        | U | Pit limiter |
-| Start (Options)       | I | Ignition |
-| L3                    | O | Wipers |
-| R3                    | P | Pause |
-| PS / Mode             | 1 | TC Down |
-| Dead                  | 2 | TC Up |
-| Trigger Happy 1       | 3 | ABS Down |
-| Trigger Happy 2       | 4 | ABS Up |
-| Trigger Happy 3       | 5 | Brake bias fwd |
-| Trigger Happy 4       | 6 | Brake bias back |
-| Trigger Happy 5       | 7 | Engine map - |
-| Trigger Happy 6       | 8 | Engine map + |
-| Trigger Happy 7       | 9 | Pit request |
-| Trigger Happy 8       | 0 | Leaderboard |
-| Trigger Happy 9       | Left Shift | Camera left |
-| Trigger Happy 10      | Space | Handbrake |
-| Trigger Happy 11      | Tab | Cycle view |
-| Trigger Happy 12      | Enter | Extra bind |
-
-Remap these inside your game just like a real Logitech wheel.
-
-## Input Pipeline
-
-Each frame the main loop builds a snapshot of every pedal, button, and D-pad bit, then hands it plus the current mouse delta to `ProcessInputFrame()`. Inside the wheel device this snapshot is applied under a single mutex, so the host only ever sees whole frames—no more half-updated pedals or staggered button toggles. HID traffic (both IN and OUT) is hard-gated: the gadget stays unbound (physically disconnected) until the enable sequence has staged neutral + snapshot frames and explicitly re-binds the UDC; disabling or losing the mouse instantly unbinds again.
-
-## Enable/Disable Flow
-
-1. Press **Ctrl+M**.
-2. The input layer refreshes `/dev/input/event*`, opens anything new, and sets `grab_desired` so every matching device is immediately `EVIOCGRAB`’d (even ones that hotplug later).
-3. Key state tracking keeps running, so pedal positions survive while ungrabbed; `ResyncKeyStates()` only re-queries hardware if something actually changed.
-4. Output stays muted until we synchronously write a neutral HID frame (while still holding the lock), bind the UDC (so the host actually sees the wheel), write the freshly captured snapshot, and only then enable the async writer plus the ~25-frame warmup burst. All force-feedback OUTPUT packets are ignored until this switch completes, preventing random torque commands during startup. If the mouse or keyboard unplugs while enabled, the wheel immediately sends a neutral frame, mutes HID traffic, unbinds the UDC (so the host thinks it was unplugged), and releases both devices.
-
-This pipeline makes rapid toggles cheap (tested at 100 Hz) while still guaranteeing the host receives a clean frame whenever control changes.
-
-## Configuration (`/etc/wheel-emulator.conf`)
+## Configure (`/etc/wheel-emulator.conf`)
 
 ```ini
 [devices]
-# Leave blank for hotplug auto-detect. Set both fields to pin exact event nodes.
 keyboard=
 mouse=
 
 [sensitivity]
-sensitivity=50   # 1–100, multiplied by 0.05 internally
+sensitivity=50    # 1–100, higher = faster steering
 
 [ffb]
-gain=0.3         # 0.1–4.0 force multiplier
+gain=0.3          # 0.1–4.0 force multiplier
 ```
 
-- **Device overrides** – set both `keyboard` and `mouse` to `/dev/input/eventX` paths if you want to prevent hotplug discovery from grabbing other peripherals.
-- **Sensitivity** – caps each mouse sample to ±2000 counts and clamps steering to ±32767 to mimic the G29 range.
-- **FFB gain** – multiplies the shaped torque inside `FFBUpdateThread`. Raise this if you want a heavier wheel; keep it below 1.0 when using `dummy_hcd` to avoid oscillations.
-
-## Force Feedback & Gadget Flow
-
-1. Games talk to the kernel `hid-lg` driver, which sends 7-byte OUTPUT reports over interface 0.
-2. The emulator’s USB gadget OUTPUT thread polls `/dev/hidg0`, buffers into 7-byte packets, and calls `ParseFFBCommand()` immediately.
-3. The physics thread (125 Hz) shapes torque, adds autocenter springs, applies gain, and runs a critically damped second-order model before blending with mouse steering.
-4. HID IN reports are serialized by the gadget polling thread, which is the sole writer to `/dev/hidg0`. Every SendState just marks the data as dirty, keeping the main loop lock-free.
+- Leave `keyboard`/`mouse` blank for auto-discovery, or set them to `/dev/input/eventX` paths to pin specific devices.
+- `sensitivity` scales mouse movement (default 50 works for most setups).
+- `gain` multiplies force feedback strength; start low when using `dummy_hcd` to avoid oscillations.
 
 ## Troubleshooting
 
-| Symptom | Checks |
-|---------|--------|
-| Host never sees the wheel | `lsusb | grep 046d:c24f`, confirm `dummy_hcd`/hardware UDC is loaded, ensure no old gadget instance is bound to the UDC |
-| Permission errors | Always run as root (or via sudo) so ConfigFS and `/dev/hidg0` are writable |
-| Wrong keyboard/mouse grabbed | Set `keyboard=` and `mouse=` in `/etc/wheel-emulator.conf` to the desired event nodes |
-| Steering too twitchy | Lower `sensitivity` in the config (values map roughly linearly) |
-| Force feedback weak | Increase `[ffb] gain`, but stay ≤4.0 to keep the physics stable |
+- **Wheel never appears in-game:** ensure `libcomposite`/`dummy_hcd` are loaded, `sudo ./wheel-emulator` is running, and `lsusb | grep 046d:c24f` shows the gadget.
+- **Wrong keyboard/mouse grabbed:** set explicit device paths in the config and restart the emulator.
+- **Need to remove the gadget:** `echo '' | sudo tee /sys/kernel/config/usb_gadget/g29wheel/UDC` followed by deleting the `g29wheel` directory (details in `logics.md`).
+- **Force feedback feels weak/too strong:** adjust `[ffb] gain` in the config and restart.
 
-## Documentation
+## Want the nitty-gritty?
 
-- `README.md` – operational overview (this file)
-- `logics.md` – deep dive into architecture, threads, and HID layout
+`logics.md` documents every subsystem (USB gadget sequencing, enable/disable handshake, threads, HID layout, etc.). Check it out if you need to hack on the codebase or understand exactly how the neutral/snapshot flow works.
 
 ## License
 
