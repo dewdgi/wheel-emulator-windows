@@ -119,6 +119,21 @@ bool WriteStringToFile(const std::string& path, const std::string& value) {
     return written == static_cast<ssize_t>(payload.size());
 }
 
+void RemoveGadgetTree(const std::string& gadget_name, const std::string& hid_function) {
+    std::string cleanup = "cd /sys/kernel/config/usb_gadget 2>/dev/null && ";
+    cleanup += "if [ -d " + gadget_name + " ]; then ";
+    cleanup += "  cd " + gadget_name + " && ";
+    cleanup += "  echo '' > UDC 2>/dev/null || true; ";
+    cleanup += "  rm -f configs/c.1/" + hid_function + " 2>/dev/null || true; ";
+    cleanup += "  rmdir configs/c.1/strings/0x409 2>/dev/null || true; ";
+    cleanup += "  rmdir configs/c.1 2>/dev/null || true; ";
+    cleanup += "  rmdir functions/" + hid_function + " 2>/dev/null || true; ";
+    cleanup += "  rmdir strings/0x409 2>/dev/null || true; ";
+    cleanup += "  cd .. && rmdir " + gadget_name + " 2>/dev/null || true; ";
+    cleanup += "fi";
+    system(cleanup.c_str());
+}
+
 }  // namespace
 
 struct GamepadDevice::ControlSnapshot {
@@ -159,7 +174,6 @@ void GamepadDevice::ShutdownThreads() {
     gadget_output_running = false;
         warmup_frames.store(0, std::memory_order_relaxed);
     output_enabled.store(false, std::memory_order_relaxed);
-    UnbindUDC();
 
     state_cv.notify_all();
     ffb_cv.notify_all();
@@ -174,7 +188,6 @@ void GamepadDevice::ShutdownThreads() {
         fd = -1;
     }
 
-    DestroyUSBGadget();
 }
 
 bool GamepadDevice::Create() {
@@ -195,13 +208,11 @@ bool GamepadDevice::Create() {
 
     if (!WaitForEndpointReady()) {
         std::cerr << "[GamepadDevice] HID endpoint never became ready after gadget creation" << std::endl;
-        DestroyUSBGadget();
         return false;
     }
 
     if (!WriteReportBlocking(neutral_report)) {
         std::cerr << "[GamepadDevice] Failed to send initial neutral frame" << std::endl;
-        DestroyUSBGadget();
         return false;
     }
 
@@ -236,70 +247,94 @@ bool GamepadDevice::CreateUSBGadget() {
 
     const std::string gadget_name(kGadgetName);
     const std::string hid_function(kHidFunction);
+    const std::string gadget_path = std::string("/sys/kernel/config/usb_gadget/") + gadget_name;
 
-    std::string cleanup = "cd /sys/kernel/config/usb_gadget 2>/dev/null && ";
-    cleanup += "if [ -d " + gadget_name + " ]; then ";
-    cleanup += "  cd " + gadget_name + " && ";
-    cleanup += "  echo '' > UDC 2>/dev/null || true; ";
-    cleanup += "  rm -f configs/c.1/" + hid_function + " 2>/dev/null || true; ";
-    cleanup += "  rmdir configs/c.1/strings/0x409 2>/dev/null || true; ";
-    cleanup += "  rmdir configs/c.1 2>/dev/null || true; ";
-    cleanup += "  rmdir functions/" + hid_function + " 2>/dev/null || true; ";
-    cleanup += "  rmdir strings/0x409 2>/dev/null || true; ";
-    cleanup += "  cd .. && rmdir " + gadget_name + " 2>/dev/null || true; ";
-    cleanup += "fi";
-    system(cleanup.c_str());
-
-    std::string descriptor_hex;
-    descriptor_hex.reserve(sizeof(kG29HidDescriptor) * 4);
-    for (uint8_t byte : kG29HidDescriptor) {
-        char buf[8];
-        std::snprintf(buf, sizeof(buf), "\\x%02x", byte);
-        descriptor_hex += buf;
+    bool gadget_exists = (access(gadget_path.c_str(), F_OK) == 0);
+    if (gadget_exists) {
+        bool hid_exists = access((gadget_path + "/functions/" + hid_function).c_str(), F_OK) == 0;
+        bool config_exists = access((gadget_path + "/configs/c.1").c_str(), F_OK) == 0;
+        if (!hid_exists || !config_exists) {
+            std::cerr << "[GamepadDevice] Existing gadget incomplete, rebuilding" << std::endl;
+            RemoveGadgetTree(gadget_name, hid_function);
+            gadget_exists = false;
+        }
     }
 
-    const std::string vendor_hex = HexValue(kVendorId);
-    const std::string product_hex = HexValue(kProductId);
-    const std::string version_hex = HexValue(kVersion);
+    if (!gadget_exists) {
+        std::string descriptor_hex;
+        descriptor_hex.reserve(sizeof(kG29HidDescriptor) * 4);
+        for (uint8_t byte : kG29HidDescriptor) {
+            char buf[8];
+            std::snprintf(buf, sizeof(buf), "\\x%02x", byte);
+            descriptor_hex += buf;
+        }
 
-    std::string cmd = "cd /sys/kernel/config/usb_gadget && ";
-    cmd += "mkdir " + gadget_name + " && cd " + gadget_name + " && ";
-    cmd += "echo 0x" + vendor_hex + " > idVendor && ";
-    cmd += "echo 0x" + product_hex + " > idProduct && ";
-    cmd += "echo 0x" + version_hex + " > bcdDevice && ";
-    cmd += "echo 0x0200 > bcdUSB && ";
-    cmd += "mkdir -p strings/0x409 && ";
-    cmd += "echo 'Logitech' > strings/0x409/manufacturer && ";
-    cmd += "echo 'G29 Driving Force Racing Wheel' > strings/0x409/product && ";
-    cmd += "echo '000000000001' > strings/0x409/serialnumber && ";
-    cmd += "mkdir -p functions/" + hid_function + " && cd functions/" + hid_function + " && ";
-    cmd += "echo 1 > protocol && echo 1 > subclass && echo 13 > report_length && ";
-    cmd += "printf '" + descriptor_hex + "' > report_desc && ";
-    cmd += "cd /sys/kernel/config/usb_gadget/" + gadget_name + " && ";
-    cmd += "mkdir -p configs/c.1/strings/0x409 && ";
-    cmd += "echo 'G29 Configuration' > configs/c.1/strings/0x409/configuration && ";
-    cmd += "echo 500 > configs/c.1/MaxPower && ";
-    cmd += "ln -s functions/" + hid_function + " configs/c.1/ && ";
-    cmd += "UDC=$(ls /sys/class/udc 2>/dev/null | head -n1) && ";
-    cmd += "if [ -n \"$UDC\" ]; then echo $UDC > UDC; fi";
+        const std::string vendor_hex = HexValue(kVendorId);
+        const std::string product_hex = HexValue(kProductId);
+        const std::string version_hex = HexValue(kVersion);
 
-    if (system(cmd.c_str()) != 0) {
-        std::cerr << "Failed to setup USB Gadget" << std::endl;
-        return false;
+        std::string cmd = "cd /sys/kernel/config/usb_gadget && ";
+        cmd += "mkdir " + gadget_name + " && cd " + gadget_name + " && ";
+        cmd += "echo 0x" + vendor_hex + " > idVendor && ";
+        cmd += "echo 0x" + product_hex + " > idProduct && ";
+        cmd += "echo 0x" + version_hex + " > bcdDevice && ";
+        cmd += "echo 0x0200 > bcdUSB && ";
+        cmd += "mkdir -p strings/0x409 && ";
+        cmd += "echo 'Logitech' > strings/0x409/manufacturer && ";
+        cmd += "echo 'G29 Driving Force Racing Wheel' > strings/0x409/product && ";
+        cmd += "echo '000000000001' > strings/0x409/serialnumber && ";
+        cmd += "mkdir -p functions/" + hid_function + " && cd functions/" + hid_function + " && ";
+        cmd += "echo 1 > protocol && echo 1 > subclass && echo 13 > report_length && ";
+        cmd += "printf '" + descriptor_hex + "' > report_desc && ";
+        cmd += "cd /sys/kernel/config/usb_gadget/" + gadget_name + " && ";
+        cmd += "mkdir -p configs/c.1/strings/0x409 && ";
+        cmd += "echo 'G29 Configuration' > configs/c.1/strings/0x409/configuration && ";
+        cmd += "echo 500 > configs/c.1/MaxPower && ";
+        cmd += "ln -s functions/" + hid_function + " configs/c.1/";
+
+        if (system(cmd.c_str()) != 0) {
+            std::cerr << "Failed to setup USB Gadget" << std::endl;
+            RemoveGadgetTree(gadget_name, hid_function);
+            return false;
+        }
+
+        gadget_exists = true;
+        std::cout << "[GamepadDevice] Created USB gadget '" << gadget_name << "'" << std::endl;
     }
-
-    usleep(500000);
-
-    fd = open(kHidDevice, O_RDWR);
-    if (fd < 0) {
-        std::cerr << "USB Gadget configured but failed to open " << kHidDevice << std::endl;
-        return false;
+    else {
+        std::cout << "[GamepadDevice] Reusing existing USB gadget '" << gadget_name << "'" << std::endl;
     }
 
     {
         std::lock_guard<std::mutex> guard(gadget_mutex);
         udc_name = ReadTrimmedFile(GadgetUDCPath());
-        udc_bound = !udc_name.empty();
+        if (udc_name.empty()) {
+            udc_name = DetectFirstUDC();
+            if (udc_name.empty()) {
+                std::cerr << "[GamepadDevice] No UDC available to bind" << std::endl;
+                return false;
+            }
+            if (!WriteStringToFile(GadgetUDCPath(), udc_name)) {
+                std::cerr << "[GamepadDevice] Failed to bind UDC '" << udc_name << "'" << std::endl;
+                return false;
+            }
+            std::cout << "[GamepadDevice] Bound UDC '" << udc_name << "'" << std::endl;
+        } else {
+            std::cout << "[GamepadDevice] Reusing bound UDC '" << udc_name << "'" << std::endl;
+        }
+        udc_bound = true;
+    }
+
+    for (int attempt = 0; attempt < 40; ++attempt) {
+        fd = open(kHidDevice, O_RDWR);
+        if (fd >= 0) {
+            break;
+        }
+        usleep(50000);
+    }
+    if (fd < 0) {
+        std::cerr << "USB Gadget configured but failed to open " << kHidDevice << std::endl;
+        return false;
     }
 
     std::cout << "USB Gadget device created successfully!" << std::endl;
