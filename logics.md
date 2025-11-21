@@ -33,8 +33,8 @@ This document matches the current gadget-only implementation. Every subsystem de
 - Auto-detects keyboard/mouse devices unless both overrides are specified, in which case only the pinned fds stay open.
 - Implements `WaitForEvents(timeout_ms)` via `poll`, so the main loop sleeps until activity or timeout.
 - Aggregates key presses into `keys[KEY_MAX]`, accumulates mouse X delta, and exposes `IsKeyPressed(keycode)` lookups.
-- `Grab(bool)` issues `EVIOCGRAB` for exclusive access while the emulator is enabled. Keyboard state stays intact across toggles so modifier chords survive rapid Ctrl+M presses, and per-device `key_shadow` data is automatically released if a device disconnects.
-- `ResyncKeyStates()` queries `EVIOCGKEY` on every keyboard device right after grabbing so the aggregated key array matches the hardware’s real state (no stuck throttle/brake if you release keys while the emulator is disabled).
+- `Grab(bool)` issues `EVIOCGRAB` for exclusive access while the emulator is enabled. `ResetState()` wipes every aggregated key counter whenever we ungrab so no stale presses leak into the next session.
+- `ResyncKeyStates()` queries `EVIOCGKEY` on every keyboard device right after grabbing/ungrabbing so the aggregated key array immediately reflects what’s physically held (Ctrl+M can be hammered without waiting for key-up events).
 
 ### `src/gamepad.cpp`
 - Holds the canonical wheel state behind `state_mutex`: steering, user steering, FFB offset/velocity, three pedals, D-pad axes, 26 button bits, enable flag, and FFB parameters.
@@ -131,7 +131,7 @@ All bindings are hardcoded in `GamepadDevice::UpdateButtons`. The README table m
 
 ## Lifecycle Guarantees
 
-- **Enable/Disable:** Ctrl+M grabs/ungrabs devices via `Input::Grab`, sends a neutral HID frame, and logs the new mode. Keyboard state is preserved so you can keep holding modifiers (e.g., Ctrl) while toggling repeatedly. Grabbing occurs outside the state mutex to avoid deadlocks if `EVIOCGRAB` blocks.
+- **Enable/Disable:** Ctrl+M grabs/ungrabs devices via `Input::Grab`, resets the aggregated key state, resyncs it with actual hardware, sends a neutral HID frame, and logs the new mode. This keeps modifiers responsive even if you hold Ctrl while toggling. Grabbing occurs outside the state mutex to avoid deadlocks if `EVIOCGRAB` blocks.
 - **Signal Safety:** All blocking syscalls in threads treat `EINTR` as retryable. The SIGINT handler only toggles `running` and writes a message, so shutdown is safe even if the gadget threads are mid-transfer.
 - **Hotplug Safety:** Each device’s `key_shadow` is flushed when the fd disconnects, releasing any held buttons so games never see stuck inputs after a keyboard unplug.
 

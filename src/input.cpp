@@ -466,6 +466,17 @@ void Input::ResyncKeyStates() {
     prev_toggle = (keys[KEY_LEFTCTRL] || keys[KEY_RIGHTCTRL]) && keys[KEY_M];
 }
 
+void Input::ResetState() {
+    memset(keys, 0, sizeof(keys));
+    memset(key_counts, 0, sizeof(key_counts));
+    for (auto& dev : devices) {
+        if (!dev.key_shadow.empty()) {
+            std::fill(dev.key_shadow.begin(), dev.key_shadow.end(), 0);
+        }
+    }
+    prev_toggle = false;
+}
+
 bool Input::IsKeyPressed(int keycode) const {
     if (keycode >= 0 && keycode < KEY_MAX) {
         return keys[keycode];

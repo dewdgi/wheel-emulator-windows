@@ -38,6 +38,9 @@ public:
     // Rebuild aggregated key state by querying each keyboard device directly
     void ResyncKeyStates();
 
+    // Clear aggregated key state for every tracked key/device
+    void ResetState();
+
     // Check if a key is currently pressed
     bool IsKeyPressed(int keycode) const;
 
