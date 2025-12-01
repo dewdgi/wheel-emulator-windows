@@ -8,11 +8,11 @@ The project now consists of a single, gadget-first pipeline: a keyboard+mouse in
 
 1. **Startup**
    - `main.cpp` checks root, installs the SIGINT handler, and loads `/etc/wheel-emulator.conf`.
-   - `WheelDevice::Create()` creates or reuses the `g29wheel` ConfigFS gadget, binds a UDC, opens `/dev/hidg0`, stages a neutral frame, and launches helper threads.
+   - `WheelDevice::Create()` creates or reuses the `g29wheel` ConfigFS gadget, binds a UDC, opens `/dev/hidg0`, stages a neutral frame, and starts the FFB loop; the HID writer/output threads come alive later when emulation actually enables.
    - `InputManager::Initialize()` configures the `DeviceScanner`, honoring optional keyboard/mouse overrides.
 2. **Main Loop**
    - `InputManager::WaitForFrame()` blocks until the scanner reports activity. Each `InputFrame` carries mouse delta X, key-derived state, and the Ctrl+M edge.
-   - Loss of a grabbed device forces `WheelDevice::SetEnabled(false)` so the host only sees valid data.
+   - `main()` watches `InputManager::AllRequiredGrabbed()` and disables via `WheelDevice::SetEnabled(false)` if a grabbed device vanishes so the host only sees valid data.
    - When enabled, `WheelDevice::ProcessInputFrame()` applies steering delta and button/pedal snapshots, then wakes the gadget writer thread.
 3. **Shutdown**
    - SIGINT flips `running=false`, waking all threads. The loop disables output, joins helper threads, and releases device grabs.
@@ -33,6 +33,7 @@ Consumes enumerator snapshots, opens the devices it cares about, and owns the li
 - Maintains device records (fd, caps, grab state, per-device key shadows).
 - Auto-discovers keyboard/mouse devices unless overrides are pinned.
 - Provides `WaitForEvents`, `Read(int& mouse_dx)`, `IsKeyPressed`, `Grab`, `ResyncKeyStates`, and health helpers like `AllRequiredGrabbed`.
+- `CheckToggle` now arms on Ctrl+M down and only fires once **both** keys are released so the desktop receives the key-up events before `EVIOCGRAB` takes ownership, preventing stuck characters in other apps.
 - Integration happens in two phases: the enumerator walks `/dev/input` without holding `devices_mutex`, then DeviceScanner integrates the delta, so event reads never block on filesystem syscalls. Enabling/disabling no longer forces an immediate rescan—the background feed keeps the registry current, so toggles stay instant while still noticing hotplug events within ~400 ms.
 
 ### `src/input/input_manager.{h,cpp}` — InputManager
@@ -46,9 +47,9 @@ Owns wheel state (steering, pedals, 26 buttons, hat, FFB state, enable flag) and
 - `SetEnabled(true/false)` handles grabbing devices, synchronizing key state, priming neutral/snapshot reports, enabling gadget threads, and releasing hardware.
 - `ProcessInputFrame` applies steering delta (scaled by sensitivity) and button/pedal snapshots when `output_enabled` is true.
 - Helper threads:
-  - `USBGadgetPollingThread`: sole HID writer; emits 13-byte reports whenever `state_dirty` or `warmup_frames` is set.
-   - `USBGadgetOutputThread`: drains `/dev/hidg0` for 7-byte OUTPUT packets and forwards commands to the FFB pipeline.
-   - `FFBUpdateThread`: ~125 Hz torque loop that blends host force, autocenter, gain, and damping, then nudges steering via `ApplySteeringLocked`.
+   - `USBGadgetPollingThread`: sole HID writer; emits 13-byte reports whenever `state_dirty` or `warmup_frames` is set.
+    - `USBGadgetOutputThread`: drains `/dev/hidg0` for 7-byte OUTPUT packets and forwards commands to the FFB pipeline.
+    - `FFBUpdateThread`: torque loop that wakes every millisecond but clamps `dt` at 10 ms (~100 Hz max) while blending host force, autocenter, gain, and damping, then nudging steering via `ApplySteeringLocked`.
 
 ### `src/hid/hid_device.{h,cpp}` — `hid::HidDevice`
 Encapsulates ConfigFS and `/dev/hidg0`.
@@ -72,7 +73,7 @@ Reads `/etc/wheel-emulator.conf`, generating a documented default when absent. K
 | Input Reader | `InputManager::ReaderLoop()` | Waits for events, builds logical frames, detects toggles |
 | Gadget Writer | `WheelDevice::USBGadgetPollingThread()` | Sole HID IN writer (13-byte reports, warmup burst) |
 | Gadget Output | `WheelDevice::USBGadgetOutputThread()` | Reads 7-byte OUTPUT packets and forwards FFB commands |
-| FFB Physics | `WheelDevice::FFBUpdateThread()` | 125 Hz torque shaping and steering offset application |
+| FFB Physics | `WheelDevice::FFBUpdateThread()` | Torque loop (≤100 Hz) that shapes force, integrates offsets, and updates steering |
 
 `WheelDevice` owns the shared wheel state protected by `state_mutex`, `state_cv`, and `ffb_cv`. DeviceScanner keeps its own locks around device vectors and scanner flags.
 
@@ -82,13 +83,13 @@ Reads `/etc/wheel-emulator.conf`, generating a documented default when absent. K
 
 1. **Creation** — `hid::HidDevice::Initialize()` ensures ConfigFS is mounted, removes incomplete gadget remnants, writes the Logitech G29 descriptor/strings/config, and links `functions/hid.usb0` into `configs/c.1`.
 2. **Binding** — The detected UDC is written to `/sys/kernel/config/usb_gadget/g29wheel/UDC`. `/dev/hidg0` opens in non-blocking mode.
-3. **Reuse** — Subsequent launches reuse the existing gadget directory/VIP/serial. Only `/dev/hidg0` and helper threads restart.
-4. **Manual teardown** — Run:
+3. **Reuse** — Normal shutdown removes the gadget tree, so most runs rebuild it from scratch; if a crash leaves remnants, the next launch reuses whatever is there before refreshing it.
+4. **Manual teardown** — Usually unnecessary because shutdown already unbinds/deletes the gadget. If a crashed process left debris, run:
    ```bash
    echo '' | sudo tee /sys/kernel/config/usb_gadget/g29wheel/UDC
    sudo rm -rf /sys/kernel/config/usb_gadget/g29wheel
    ```
-   Use only when switching gadget stacks; the emulator intentionally leaves the gadget intact.
+   Use only when switching gadget stacks or recovering from a failed run.
 
 ---
 
@@ -139,7 +140,7 @@ Buttons map to `Q,E,F,G,H,R,T,Y,U,I,O,P,1,2,3,4,5,6,7,8,9,0,LeftShift,Space,Tab,
 
 ## Reliability Notes
 
-- If `DeviceScanner` loses a grabbed keyboard/mouse, `InputManager` triggers an automatic disable so the host never receives partially updated frames.
+- If `DeviceScanner` loses a grabbed keyboard/mouse, the main loop spots the missing grab via `InputManager::AllRequiredGrabbed()` and disables the emulator so the host never receives partially updated frames.
 - `DeviceScanner::ReleaseDeviceKeys` clears pressed keys for disappearing devices, preventing stuck buttons.
 - Logging tags (`hid`, `input_manager`, `wheel_device`, etc.) make journald/console traces easy to follow.
 - `lsusb | grep 046d:c24f` should show the gadget even when emulation is disabled because the device stays enumerated and streams neutral frames.
