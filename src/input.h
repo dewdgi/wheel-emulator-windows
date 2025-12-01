@@ -8,6 +8,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <thread>
 
 class Input {
     // Event-driven additions
@@ -38,9 +39,6 @@ public:
     // Rebuild aggregated key state by querying each keyboard device directly
     void ResyncKeyStates();
 
-    // Mark that a resync is needed (e.g., new keyboard device discovered)
-    void MarkResyncNeeded();
-
     // Check if a key is currently pressed
     bool IsKeyPressed(int keycode) const;
     bool HasGrabbedKeyboard() const;
@@ -60,6 +58,13 @@ private:
     };
 
     std::vector<DeviceHandle> devices;
+    mutable std::mutex devices_mutex;
+    std::mutex scanner_mutex;
+    std::condition_variable scan_cv;
+    std::thread scanner_thread;
+    bool scanner_stop = false;
+    bool scan_requested = false;
+    bool force_scan_requested = false;
     std::string keyboard_override;
     std::string mouse_override;
     std::chrono::steady_clock::time_point last_scan;
@@ -73,10 +78,15 @@ private:
     int key_counts[KEY_MAX];
     bool prev_toggle;
     
-    void RefreshDevices();
-    void EnsureManualDevice(const std::string& path, bool want_keyboard, bool want_mouse);
+    void StartScannerThread();
+    void StopScannerThread();
+    void ScannerThreadMain();
+    void RequestScan(bool force);
+    void RunSynchronousScan(bool force);
+    void RefreshDevicesLocked(bool force);
+    void EnsureManualDeviceLocked(const std::string& path, bool want_keyboard, bool want_mouse);
     void CloseDevice(DeviceHandle& dev);
-    DeviceHandle* FindDevice(const std::string& path);
+    DeviceHandle* FindDeviceLocked(const std::string& path);
     bool DrainDevice(DeviceHandle& dev, int& mouse_dx);
     void ReleaseDeviceKeys(DeviceHandle& dev);
     bool ShouldLogAgain(std::chrono::steady_clock::time_point& last_log);
@@ -84,6 +94,9 @@ private:
     bool WantsMouseAuto() const;
     bool NeedsKeyboard() const;
     bool NeedsMouse() const;
+    bool HasGrabbedKeyboardLocked() const;
+    bool HasGrabbedMouseLocked() const;
+    bool AllRequiredGrabbedLocked() const;
 };
 
 #endif // INPUT_H
