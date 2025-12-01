@@ -67,6 +67,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    std::cout << "All systems ready. Toggle to enable." << std::endl;
+
     InputFrame frame;
     while (running) {
         if (!input_manager.WaitForFrame(frame)) {
@@ -82,9 +84,12 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-
         if (frame.toggle_pressed) {
-            wheel_device.ToggleEnabled(input_manager);
+            if (!input_manager.DevicesReady()) {
+                LOG_WARN("main", "Toggle pressed before devices ready; ignoring request");
+            } else {
+                wheel_device.ToggleEnabled(input_manager);
+            }
         }
 
         if (wheel_device.IsEnabled()) {

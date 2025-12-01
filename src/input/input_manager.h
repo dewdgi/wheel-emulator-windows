@@ -25,6 +25,7 @@ public:
     bool GrabDevices(bool enable);
     bool AllRequiredGrabbed() const;
     void ResyncKeyStates();
+    bool DevicesReady() const;
 
     WheelInputState LatestLogicalState() const;
 

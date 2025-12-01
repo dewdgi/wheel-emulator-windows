@@ -631,6 +631,11 @@ bool DeviceScanner::AllRequiredGrabbed() const {
     return AllRequiredGrabbedLocked();
 }
 
+bool DeviceScanner::HasRequiredDevices() const {
+    std::lock_guard<std::mutex> lock(devices_mutex);
+    return HasRequiredDevicesLocked();
+}
+
 bool DeviceScanner::NeedsKeyboard() const {
     return true;
 }
@@ -671,5 +676,30 @@ bool DeviceScanner::AllRequiredGrabbedLocked() const {
     bool need_mouse = NeedsMouse();
     bool keyboard_ok = !need_keyboard || HasGrabbedKeyboardLocked();
     bool mouse_ok = !need_mouse || HasGrabbedMouseLocked();
+    return keyboard_ok && mouse_ok;
+}
+
+bool DeviceScanner::HasRequiredDevicesLocked() const {
+    bool need_keyboard = NeedsKeyboard();
+    bool need_mouse = NeedsMouse();
+    bool keyboard_ok = !need_keyboard;
+    bool mouse_ok = !need_mouse;
+
+    if (!keyboard_ok) {
+        for (const auto& dev : devices) {
+            if (dev.fd >= 0 && dev.keyboard_capable) {
+                keyboard_ok = true;
+                break;
+            }
+        }
+    }
+    if (!mouse_ok) {
+        for (const auto& dev : devices) {
+            if (dev.fd >= 0 && dev.mouse_capable) {
+                mouse_ok = true;
+                break;
+            }
+        }
+    }
     return keyboard_ok && mouse_ok;
 }

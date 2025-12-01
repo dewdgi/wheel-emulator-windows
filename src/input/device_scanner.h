@@ -46,6 +46,7 @@ public:
     bool HasGrabbedKeyboard() const;
     bool HasGrabbedMouse() const;
     bool AllRequiredGrabbed() const;
+    bool HasRequiredDevices() const;
 
 private:
     struct DeviceHandle {
@@ -90,6 +91,7 @@ private:
     bool HasGrabbedMouseLocked() const;
     bool AllRequiredGrabbedLocked() const;
     bool HasOpenDevicesLocked() const;
+    bool HasRequiredDevicesLocked() const;
     bool BuildAutoDeviceHandle(const std::string& path,
                                bool want_keyboard,
                                bool want_mouse,

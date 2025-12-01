@@ -94,6 +94,10 @@ void InputManager::ResyncKeyStates() {
     current_state_ = BuildLogicalState();
 }
 
+bool InputManager::DevicesReady() const {
+    return device_scanner_.HasRequiredDevices();
+}
+
 WheelInputState InputManager::LatestLogicalState() const {
     std::lock_guard<std::mutex> lock(frame_mutex_);
     return current_state_;
