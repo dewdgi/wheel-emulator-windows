@@ -200,8 +200,6 @@ void WheelDevice::SetEnabled(bool enable, InputManager& input_manager) {
         state_cv.notify_all();
     } else {
         warmup_frames.store(0, std::memory_order_release);
-        output_enabled.store(false, std::memory_order_release);
-        state_dirty.store(false, std::memory_order_release);
 
         std::array<uint8_t, 13> neutral_report;
         {
@@ -209,7 +207,18 @@ void WheelDevice::SetEnabled(bool enable, InputManager& input_manager) {
             ApplyNeutralLocked(true);
             neutral_report = BuildHIDReportLocked();
         }
-        if (!WriteReportBlocking(neutral_report)) {
+
+        bool neutral_sent = false;
+        if (gadget_running.load(std::memory_order_acquire) && output_enabled.load(std::memory_order_acquire)) {
+            state_dirty.store(true, std::memory_order_release);
+            state_cv.notify_all();
+            neutral_sent = WaitForStateFlush(150);
+        }
+
+        output_enabled.store(false, std::memory_order_release);
+        state_dirty.store(false, std::memory_order_release);
+
+        if (!neutral_sent && !WriteReportBlocking(neutral_report)) {
             std::cerr << "[WheelDevice] Failed to send neutral frame while disabling" << std::endl;
         }
         input_manager.ResyncKeyStates();
@@ -277,6 +286,25 @@ void WheelDevice::NotifyStateChanged() {
     state_dirty.store(true, std::memory_order_release);
     state_cv.notify_all();
     ffb_cv.notify_all();
+}
+
+bool WheelDevice::WaitForStateFlush(int timeout_ms) {
+    if (timeout_ms <= 0) {
+        return !state_dirty.load(std::memory_order_acquire);
+    }
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (!state_dirty.load(std::memory_order_acquire)) {
+            return true;
+        }
+        if (!running.load(std::memory_order_acquire) ||
+            !gadget_running.load(std::memory_order_acquire) ||
+            !output_enabled.load(std::memory_order_acquire)) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return !state_dirty.load(std::memory_order_acquire);
 }
 
 bool WheelDevice::ApplySteeringDeltaLocked(int delta, int sensitivity) {

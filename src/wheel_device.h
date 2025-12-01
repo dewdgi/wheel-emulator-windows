@@ -55,6 +55,7 @@ private:
     void ApplyNeutralLocked(bool reset_ffb);
     uint32_t BuildButtonBitsLocked() const;
     bool WriteReportBlocking(const std::array<uint8_t, 13>& report);
+    bool WaitForStateFlush(int timeout_ms);
     void EnsureGadgetThreadsStarted();
     void StopGadgetThreads();
 
