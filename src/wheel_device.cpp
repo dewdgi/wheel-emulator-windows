@@ -148,7 +148,6 @@ void WheelDevice::SetEnabled(bool enable, InputManager& input_manager) {
         }
 
         input_manager.ResyncKeyStates();
-        WheelInputState snapshot = input_manager.LatestLogicalState();
 
         output_enabled.store(false, std::memory_order_release);
         warmup_frames.store(0, std::memory_order_release);
@@ -209,11 +208,6 @@ void WheelDevice::SetEnabled(bool enable, InputManager& input_manager) {
                 return;
             }
             output_enabled.store(true, std::memory_order_release);
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(state_mutex);
-            ApplySnapshotLocked(snapshot);
         }
 
         warmup_frames.store(25, std::memory_order_release);
