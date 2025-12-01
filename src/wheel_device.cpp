@@ -12,11 +12,14 @@
 #include <thread>
 #include <unistd.h>
 
+#include "logging/logger.h"
+
 extern std::atomic<bool> running;
 
 namespace {
 
 constexpr size_t kFFBPacketSize = 7;
+constexpr const char* kTag = "wheel_device";
 
 }  // namespace
 
@@ -24,7 +27,6 @@ void WheelDevice::NotifyAllShutdownCVs() {
     state_cv.notify_all();
     ffb_cv.notify_all();
 }
-
 WheelDevice::WheelDevice()
         : gadget_running(false), gadget_output_running(false),
             enabled(false), steering(0.0f), user_steering(0.0f), ffb_offset(0.0f),
@@ -60,7 +62,7 @@ void WheelDevice::ShutdownThreads() {
 }
 
 bool WheelDevice::Create() {
-    std::cout << "Attempting to create device using USB Gadget (real USB device)..." << std::endl;
+    LOG_DEBUG(kTag, "Attempting to create device using USB Gadget (real USB device)...");
     if (!hid_device_.Initialize()) {
         std::cerr << "USB Gadget creation failed; wheel emulator requires a USB gadget capable kernel" << std::endl;
         std::cerr << "Ensure configfs is mounted, libcomposite/dummy_hcd modules are available, and a UDC is present." << std::endl;
@@ -211,8 +213,9 @@ void WheelDevice::SetEnabled(bool enable, InputManager& input_manager) {
             std::cerr << "[WheelDevice] Failed to send neutral frame while disabling" << std::endl;
         }
         input_manager.GrabDevices(false);
+        input_manager.ResyncKeyStates();
     }
-    std::cout << (enable ? "Emulation ENABLED" : "Emulation DISABLED") << std::endl;
+    LOG_INFO(kTag, (enable ? "Emulation ENABLED" : "Emulation DISABLED"));
 }
 
 void WheelDevice::ToggleEnabled(InputManager& input_manager) {
