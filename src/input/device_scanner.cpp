@@ -508,7 +508,7 @@ bool DeviceScanner::Grab(bool enable) {
     int grab = enable ? 1 : 0;
     int changed = 0;
     bool had_error = false;
-        for (auto& dev : devices) {
+    for (auto& dev : devices) {
         if (dev.fd < 0) {
             continue;
         }
@@ -540,16 +540,15 @@ bool DeviceScanner::Grab(bool enable) {
         }
     }
 
-        if (changed > 0) {
-            if (enable) {
-                if (ShouldLogAgain(last_grab_log)) {
-                    std::cout << "Grabbed " << changed << " device" << (changed == 1 ? "" : "s")
-                              << std::endl;
-                }
-            } else {
-                std::cout << "Released " << changed << " device" << (changed == 1 ? "" : "s")
+    if (changed > 0) {
+        if (enable) {
+            if (ShouldLogAgain(last_grab_log)) {
+                std::cout << "Grabbed " << changed << " device" << (changed == 1 ? "" : "s")
                           << std::endl;
             }
+        } else {
+            std::cout << "Released " << changed << " device" << (changed == 1 ? "" : "s")
+                      << std::endl;
         }
     }
 
