@@ -13,7 +13,6 @@
     packages.${system}.wheel-hid-emulator = pkgs.stdenv.mkDerivation {
       pname = "wheel-hid-emulator";
       version = "main";
-
       src = ./.;
 
       nativeBuildInputs = [ pkgs.pkg-config ];
