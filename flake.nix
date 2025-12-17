@@ -19,7 +19,7 @@
           owner = "dewdgi";
           repo = "wheel-hid-emulator";
           rev = "main";
-          sha256 = "0000000000000000000000000000000000000000000000000000"; # replace after first build
+          sha256 = "0000000000000000000000000000000000000000000000000000";
         };
 
         nativeBuildInputs = [ pkgs.pkg-config ];
@@ -34,4 +34,3 @@
       };
   };
 }
-
