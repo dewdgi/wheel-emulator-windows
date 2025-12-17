@@ -3,10 +3,9 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs";
-    wheel-src.url = "github:dewdgi/wheel-hid-emulator/main";
   };
 
-  outputs = { self, nixpkgs, wheel-src }:
+  outputs = { self, nixpkgs }:
   let
     system = "x86_64-linux";
     pkgs = import nixpkgs { inherit system; };
@@ -15,7 +14,7 @@
       pkgs.stdenv.mkDerivation {
         pname = "wheel-hid-emulator";
         version = "main";
-        src = wheel-src;
+        src = ./.;
 
         nativeBuildInputs = [ pkgs.pkg-config ];
         buildInputs = [ pkgs.hidapi ];
@@ -29,3 +28,4 @@
       };
   };
 }
+
