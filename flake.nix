@@ -6,7 +6,7 @@
     in {
       packages.x86_64-linux.wheel-hid-emulator = (pkgsFor "x86_64-linux").stdenv.mkDerivation {
         pname = "wheel-hid-emulator";
-        version = builtins.getEnv "GIT_COMMIT";
+        version = self.shortRev;
         src = ./.;
         nativeBuildInputs = [ (pkgsFor "x86_64-linux").pkg-config ];
         buildInputs = [ (pkgsFor "x86_64-linux").hidapi ];
