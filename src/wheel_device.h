@@ -3,66 +3,105 @@
 
 #include <array>
 #include <atomic>
-#include <mutex>
-
 #include <condition_variable>
+#include <mutex>
 #include <thread>
-#include <cmath>
+#include <string>
 
-#include "vjoy_device.h"
+#include "hid/hid_device.h"
 #include "input/wheel_input.h"
 #include "wheel_types.h"
+
+class InputManager;
+extern std::atomic<bool> running;
 
 class WheelDevice {
 public:
     WheelDevice();
     ~WheelDevice();
 
-    // Prevent copying
     WheelDevice(const WheelDevice&) = delete;
     WheelDevice& operator=(const WheelDevice&) = delete;
+    WheelDevice(WheelDevice&&) noexcept = delete;
+    WheelDevice& operator=(WheelDevice&&) noexcept = delete;
 
     bool Create();
-    void ShutdownThreads(); // No-op on Windows basically
-    void SetFFBGain(float gain);
-    
-    // Main processing loop called by main.cpp
-    void ProcessInputFrame(const InputFrame& frame, int sensitivity);
+    void ShutdownThreads();
+    void NotifyAllShutdownCVs();
 
-    // FFB Handler
-    void OnFFBPacket(void* packet_data);
+    bool IsEnabled();
+    void SetEnabled(bool enable, InputManager& input_manager);
+    void ToggleEnabled(InputManager& input_manager);
+    void SetFFBGain(float gain);
+
+    void ProcessInputFrame(const InputFrame& frame, int sensitivity);
+    void SendNeutral(bool reset_ffb = true);
+    void ApplySnapshot(const WheelInputState& snapshot);
+
+    // vJoy FFB Callback
+    void OnFFBPacket(void* data);
 
 private:
+    void NotifyStateChanged();
+    bool SendGadgetReport();
+    std::array<uint8_t, 13> BuildHIDReport();
+    std::array<uint8_t, 13> BuildHIDReportLocked() const;
+    void USBGadgetPollingThread();
+    void USBGadgetOutputThread();
+    void ReadGadgetOutput(int fd);
     void FFBUpdateThread();
     void ParseFFBCommand(const uint8_t* data, size_t size);
     float ShapeFFBTorque(float raw_force) const;
     bool ApplySteeringLocked();
-    void SendUpdateLocked(); // Helper to send state to vJoy
+    bool ApplySteeringDeltaLocked(int delta, int sensitivity);
+    bool ApplySnapshotLocked(const WheelInputState& snapshot);
+    void ApplyNeutralLocked(bool reset_ffb);
+    uint32_t BuildButtonBitsLocked() const;
+    bool WriteReportBlocking(const std::array<uint8_t, 13>& report);
+    bool WaitForStateFlush(int timeout_ms);
+    void EnsureGadgetThreadsStarted();
+    void StopGadgetThreads();
 
-    VJoyDevice hid_device_;
-    
-    std::mutex state_mutex;
-    std::condition_variable ffb_cv;
+    std::thread gadget_thread;
+    std::atomic<bool> gadget_running;
+    std::thread gadget_output_thread;
+    std::atomic<bool> gadget_output_running;
     std::thread ffb_thread;
     std::atomic<bool> ffb_running;
-    
-    // Core state (using Linux branch scale: +/- 32768.0f)
-    float user_steering = 0.0f;
-    float steering = 0.0f; // Combined
-    float throttle = 0.0f;
-    float brake = 0.0f;
-    float clutch = 0.0f;
-    int8_t dpad_x = 0;
-    int8_t dpad_y = 0;
-    std::array<uint8_t, static_cast<size_t>(WheelButton::Count)> button_states{};
+    std::atomic<bool> state_dirty;
+    std::atomic<int> warmup_frames;
+    std::atomic<bool> output_enabled;
+    std::mutex enable_mutex;
+    std::mutex state_mutex;
+    std::condition_variable state_cv;
+    std::condition_variable ffb_cv;
 
-    // FFB State
-    float ffb_gain = 1.0f; 
-    float ffb_offset = 0.0f;
-    float ffb_velocity = 0.0f;
-    int16_t ffb_force = 0;
-    int16_t ffb_autocenter = 0; // Linux default match (was 4096)
+    hid::HidDevice hid_device_;
+
+    bool enabled;
+    float steering;
+    float user_steering;
+    float ffb_offset;
+    float ffb_velocity;
+    float ffb_gain;
+    float throttle;
+    float brake;
+    float clutch;
+    std::array<uint8_t, static_cast<size_t>(WheelButton::Count)> button_states;
+    int8_t dpad_x;
+    int8_t dpad_y;
+
+    // vJoy Effect Management
+    struct VJoyEffectState {
+        bool playing = false;
+        long magnitude = 0;
+    };
+    std::array<VJoyEffectState, 17> vjoy_effects_; 
+    
+    int16_t ffb_force;
+    int16_t ffb_autocenter;
+    std::array<uint8_t, 7> gadget_output_pending{};
+    size_t gadget_output_pending_len;
 };
 
-
-#endif // WHEEL_DEVICE_H
+#endif  // WHEEL_DEVICE_H

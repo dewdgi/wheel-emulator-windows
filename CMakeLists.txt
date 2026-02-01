@@ -22,7 +22,7 @@ include_directories(src/vjoy_sdk/inc)
 link_directories(src/vjoy_sdk/lib)
 
 # Link libraries
-set(LIBS vJoyInterface)
+set(LIBS vJoyInterface winmm)
 
 add_executable(wheel-emulator ${SOURCES})
 
