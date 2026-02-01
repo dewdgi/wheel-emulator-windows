@@ -346,9 +346,17 @@ bool DeviceScanner::IsKeyPressed(int keycode) const {
 bool DeviceScanner::Grab(bool enable) { return true; }
 void DeviceScanner::ResyncKeyStates() { } 
 
-// Check toggle: Ctrl + M
+// Check toggle: Ctrl + M with Latch for Single Event logic
 bool DeviceScanner::CheckToggle() {
-    return IsKeyPressed(KEY_LEFTCTRL) && IsKeyPressed(KEY_M);
+    bool down = IsKeyPressed(KEY_LEFTCTRL) && IsKeyPressed(KEY_M);
+    if (down && !toggle_latch_) {
+        toggle_latch_ = true;
+        return true;
+    }
+    if (!down) {
+        toggle_latch_ = false;
+    }
+    return false;
 }
 
 bool DeviceScanner::HasGrabbedKeyboard() const { return true; }

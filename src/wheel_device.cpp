@@ -2,29 +2,16 @@
 #include "logging/logger.h"
 #include <iostream>
 #include <algorithm>
-#include <windows.h> // For PVOID etc if not transitively included, though vjoyinterface.h usually needs it
+#include <windows.h>
+#include "public.h"
+#include "vjoyinterface.h"
 
 namespace {
 constexpr const char* kTag = "wheel_device";
-
-
-// Helper to map -1..1 range to whatever logic? 
-// Actually vJoy expects axes. 
-// VJoyDevice::Update takes float steering, throttle etc. 
-// Assuming VJoyDevice handles the scaling to 0..32767 internally.
-// Or if it expects normalized 0..1 or -1..1.
-// Let's assume -1.0 to 1.0 for steering, 0.0 to 1.0 for pedals.
 }
 
-// Callback wrapper
 static void CALLBACK FFB_Callback(PVOID data, PVOID user_data) {
     if (user_data) {
-        // Need to cast to WheelDevice but WheelDevice declaration might not include ParseFFB?
-        // Actually we need to just print or handle something.
-        // For minimal implementation let's just log what we got if we can inspect `data`.
-        // vJoy SDK says `data` is a pointer to the FFB packet.
-        // We probably need to implement the parsing logic similar to Linux gadget.
-        
         static_cast<WheelDevice*>(user_data)->OnFFBPacket(data);
     }
 }
@@ -40,10 +27,8 @@ WheelDevice::~WheelDevice() {
 bool WheelDevice::Create() {
     if (hid_device_.Initialize()) {
         hid_device_.RegisterFFBCallback((void*)FFB_Callback, this);
-        
         ffb_running = true;
         ffb_thread = std::thread(&WheelDevice::FFBUpdateThread, this);
-        
         return true;
     }
     return false;
@@ -65,16 +50,19 @@ void WheelDevice::SetFFBGain(float gain) {
     ffb_gain = gain;
 }
 
+void WheelDevice::SendUpdateLocked() {
+    float normalized_steering = steering / 32768.0f;
+    hid_device_.Update(normalized_steering, throttle, brake, clutch, button_states);
+}
+
 void WheelDevice::ProcessInputFrame(const InputFrame& frame, int sensitivity) {
     std::lock_guard<std::mutex> lock(state_mutex);
     
-    // Steering logic (accumulation) matched to Linux behavior
-    // Linux Logic: step = delta * sensitivity * 0.05. Range +/- 32768.
-    
+    // Linux Accumulation Logic Match
     constexpr float base_gain = 0.05f; 
     float steering_delta = static_cast<float>(frame.mouse_dx) * static_cast<float>(sensitivity) * base_gain;
     
-    // Clamp max step speed
+    // Clamp delta speed
     const float max_step = 2000.0f;
     if (steering_delta > max_step) steering_delta = max_step;
     if (steering_delta < -max_step) steering_delta = -max_step;
@@ -82,15 +70,14 @@ void WheelDevice::ProcessInputFrame(const InputFrame& frame, int sensitivity) {
     if (steering_delta != 0.0f) {
         user_steering += steering_delta;
         
-        // Clamp -32768 to 32768
+        // Clamp Logical Range (-32768..32767)
         if (user_steering > 32767.0f) user_steering = 32767.0f;
         if (user_steering < -32768.0f) user_steering = -32768.0f;
         
         ApplySteeringLocked();
     }
     
-    // Pedals from booleans (digital input)
-    // Keep 0.0 to 1.0 for pedals as that's what hid_device_.Update expects
+    // Pedals
     throttle = frame.logical.throttle ? 1.0f : 0.0f;
     brake = frame.logical.brake ? 1.0f : 0.0f;
     clutch = frame.logical.clutch ? 1.0f : 0.0f;
@@ -98,142 +85,81 @@ void WheelDevice::ProcessInputFrame(const InputFrame& frame, int sensitivity) {
     // Copy buttons
     button_states = frame.logical.buttons;
     
-    // Convert steering from internal +/- 32768 to normalized +/- 1.0 for vJoy
-    float normalized_steering = steering / 32768.0f;
-    hid_device_.Update(normalized_steering, throttle, brake, clutch, button_states);
+    SendUpdateLocked();
 }
 
-
 void WheelDevice::OnFFBPacket(void* data) {
-    // Standard vJoy FFB Header
-    struct FFB_DATA_HEADER {
-        ULONG size;
-        ULONG cmd;
-    };
-    
     if (!data) return;
+
+    // Use vJoy SDK helper functions to process the packet strictly
+    FFB_DATA* packet = static_cast<FFB_DATA*>(data);
+    FFBPType type = PT_CONSTREP; // Default init
     
-    FFB_DATA_HEADER* header = static_cast<FFB_DATA_HEADER*>(data);
-    ULONG size = header->size;
-    ULONG cmd = header->cmd;
-    
-    // Validate size
-    if (size < 8) return; 
-    
-    // Pointer to the raw payload (HID Report)
-    const uint8_t* raw_payload = static_cast<const uint8_t*>(data) + 8;
-    size_t payload_len = size - 8;
-    
-    // The "Cmd" field from vJoy is often passed as IOCTL_HID_WRITE_REPORT or SET_REPORT.
-    // However, the *payload* (raw_payload) actually contains the HID FFB data.
-    // The first byte of raw_payload is the Report ID.
-    // Linux logic expects the first byte of `ParseFFBCommand`'s `data` argument to be the Effect Command ID (like 0x11, 0x13).
-    // Let's inspect raw_payload to see if it matches.
-    
-    // If the game sends Report ID X, raw_payload[0] should be X.
-    
-    if (payload_len > 0) {
-        // Debug
-        // std::cout << "FFB Payload [0]: " << std::hex << (int)raw_payload[0] << std::dec << std::endl;
+    if (Ffb_h_Type(packet, &type) != ERROR_SUCCESS) {
+        return; 
+    }
+
+    std::lock_guard<std::mutex> lock(state_mutex);
+
+    switch (type) {
+        case PT_CONSTREP: // Usage Set Constant Force Report
+        {
+            FFB_EFF_CONSTANT effect;
+            if (Ffb_h_Eff_Constant(packet, &effect) == ERROR_SUCCESS) {
+                // Magnitude: -10000 to 10000
+                // We clamp just in case vJoy sends out of bounds
+                long raw_mag = effect.Magnitude;
+                if (raw_mag > 10000) raw_mag = 10000;
+                if (raw_mag < -10000) raw_mag = -10000;
+
+                // Map vJoy +/- 10000 to Linux Physics +/- 6144
+                // Linux: 0xFF -> -127 force -> -6096 (Left)
+                // Linux: 0x00 -> +128 force -> +6144 (Right)
+                // vJoy: +10000 (Right) -> +6144
+                // vJoy: -10000 (Left)  -> -6144
+                // We use POSITIVE mapping (Raw Logic). 
+                ffb_force = static_cast<int16_t>(static_cast<float>(raw_mag) * 0.6144f);
+                ffb_cv.notify_all();
+            }
+            break;
+        }
+
+        case PT_EFOPREP: // Usage Effect Operation Report
+        {
+            FFB_EFF_OP op;
+            if (Ffb_h_EffOp(packet, &op) == ERROR_SUCCESS) {
+                if (op.EffectOp == EFF_STOP) {
+                    ffb_force = 0;
+                }
+                ffb_cv.notify_all();
+            }
+            break;
+        }
         
-        // Pass payload directly to ParseFFBCommand
-        ParseFFBCommand(raw_payload, payload_len);
+        case PT_CTRLREP: // Usage PID Device Control
+        {
+            FFB_CTRL control;
+            if (Ffb_h_DevCtrl(packet, &control) == ERROR_SUCCESS) {
+                 switch (control) {
+                     case CTRL_STOPALL:
+                     case CTRL_DEVRST:
+                        ffb_force = 0;
+                        break;
+                     default:
+                        break;
+                 }
+                 ffb_cv.notify_all();
+            }
+            break;
+        }
+
+        default:
+            break;
     }
 }
 
 void WheelDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
-    if (size < 1) return;
-
-    std::lock_guard<std::mutex> lock(state_mutex);
-    
-    // vJoy / Windows HID FFB Mapping
-    // The data[0] byte is the Report ID.
-    // The previous debug log showed "ID=b0 ef cf a8..." which was garbage data? 
-    // Wait, the user paste showed "b0 ef cf a8" which doesn't look like standard FFB cmds.
-    // vJoyInterface might use a packed structure inside the payload for "GenCB".
-    
-    // If the logging showed garbage, maybe "raw_payload" offset is wrong or vJoy uses a different struct.
-    // However, assuming standard HID PID behavior:
-    // 0x25: Effect
-    // 0x26: Start/Stop
-    // 0x50: Device Control
-    // 0xFE: Autocenter (Logitech specific custom?)
-    
-    // Linux implementation used Logitech G29 specific reports? (0x11, 0x13, 0xF8...)
-    // If vJoy is emulating a standard joystick, it uses generic PID (Physical Interface Device) report IDs.
-    
-    // Let's try to map standard PID to our engine if possible, OR
-    // if the user configured vJoy to emulate a "G25/G27/G29", vJoy passes those raw packets.
-    // If vJoy is in "FFB" mode, it usually receives generic DirectInput effect parameters which are translated to HID.
-    
-    uint8_t cmd = data[0];
-    
-    // Debugging Unknown Commands
-    // static int unk_log = 0;
-    // if (++unk_log % 50 == 0) std::cout << "FFB Cmd: " << std::hex << (int)cmd << std::dec << std::endl;
-
-    switch (cmd) {
-        // Standard PID Block Load (similar to 0x11 constant force but generic)
-        case 0x11: // Logitech/Linux Constant Force
-        {
-             if (size < 3) break;
-             int8_t force = static_cast<int8_t>(data[2]) - 0x80;
-             ffb_force = static_cast<int16_t>(-force) * 48;
-             ffb_cv.notify_all();
-             break;
-        }
-        case 0x25: // PID SET EFFORT 
-        case 0x26: // PID START/STOP
-             // To support generic vJoy FFB, we need a full PID parser.
-             // For now, let's treat it as a "placeholder" that activates simple spring effects?
-             break;
-             
-        // If we see typical Logitech codes:
-        case 0x13: ffb_force = 0; ffb_cv.notify_all(); break;
-        case 0xF5: ffb_autocenter = 0; ffb_cv.notify_all(); break;
-        
-        // ... (rest of old switch) ...
-        default:
-            break;
-    }
-    
-    // Re-paste logic for cleanliness
-    switch (cmd) {
-        case 0x11: {  // Constant force slot update
-            if (size < 3) break;
-            int8_t force = static_cast<int8_t>(data[2]) - 0x80; 
-            ffb_force = static_cast<int16_t>(-force) * 48;
-            ffb_cv.notify_all();
-            break;
-        }
-        case 0x13:  // Stop force effect
-            ffb_force = 0;
-            ffb_cv.notify_all();
-            break;
-        case 0xf5:  // Disable autocenter
-            if (ffb_autocenter != 0) {
-                ffb_autocenter = 0;
-                ffb_cv.notify_all();
-            }
-            break;
-        case 0xfe:  // Configure autocenter
-            if (size >= 3 && data[1] == 0x0d) {
-                int16_t strength = static_cast<int16_t>(data[2]) * 16;
-                if (ffb_autocenter != strength) {
-                    ffb_autocenter = strength;
-                    ffb_cv.notify_all();
-                }
-            }
-            break;
-        case 0x14:  // Enable default autocenter
-            if (ffb_autocenter == 0) {
-                ffb_autocenter = 1024;
-                ffb_cv.notify_all();
-            }
-            break;
-        default:
-            break;
-    }
+    // Unused
 }
 
 float WheelDevice::ShapeFFBTorque(float raw_force) const {
@@ -266,7 +192,6 @@ float WheelDevice::ShapeFFBTorque(float raw_force) const {
 
 bool WheelDevice::ApplySteeringLocked() {
     float combined = user_steering + ffb_offset;
-    // Clamp to logical range
     if (combined > 32767.0f) combined = 32767.0f;
     if (combined < -32768.0f) combined = -32768.0f;
     
@@ -284,9 +209,6 @@ void WheelDevice::FFBUpdateThread() {
 
     while (ffb_running) {
         std::unique_lock<std::mutex> lock(state_mutex);
-        
-        // Wait for update or timeout (1ms tick)
-        // Linux code waits 1ms.
         ffb_cv.wait_for(lock, std::chrono::milliseconds(1));
         
         if (!ffb_running) break;
@@ -297,7 +219,6 @@ void WheelDevice::FFBUpdateThread() {
         float local_velocity = ffb_velocity;
         float local_gain = ffb_gain;
         float local_steering = steering;
-        
         lock.unlock();
 
         auto now = clock::now();
@@ -312,7 +233,6 @@ void WheelDevice::FFBUpdateThread() {
         float alpha = 1.0f - std::exp(-dt * force_filter_hz);
         if (alpha < 0.0f) alpha = 0.0f;
         if (alpha > 1.0f) alpha = 1.0f;
-        
         filtered_ffb += (commanded_force - filtered_ffb) * alpha;
 
         float spring = 0.0f;
@@ -324,6 +244,14 @@ void WheelDevice::FFBUpdateThread() {
         float target_offset = (filtered_ffb + spring) * local_gain;
         if (target_offset > offset_limit) target_offset = offset_limit;
         if (target_offset < -offset_limit) target_offset = -offset_limit;
+        
+        static int phys_log = 0;
+        if ((std::abs(target_offset) > 10.0f || std::abs(local_offset) > 10.0f) && ++phys_log % 500 == 0) {
+            std::cout << "FFB Phys: Steer=" << local_steering 
+                      << " Spring=" << spring 
+                      << " Offset=" << local_offset 
+                      << " Tgt=" << target_offset << std::endl;
+        }
 
         const float stiffness = 120.0f;
         const float damping = 8.0f;
@@ -351,7 +279,7 @@ void WheelDevice::FFBUpdateThread() {
             ffb_offset = local_offset;
             ffb_velocity = local_velocity;
             ApplySteeringLocked();
+            SendUpdateLocked();
         }
     }
 }
-

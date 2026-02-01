@@ -37,6 +37,7 @@ private:
     void ParseFFBCommand(const uint8_t* data, size_t size);
     float ShapeFFBTorque(float raw_force) const;
     bool ApplySteeringLocked();
+    void SendUpdateLocked(); // Helper to send state to vJoy
 
     VJoyDevice hid_device_;
     
@@ -56,11 +57,11 @@ private:
     std::array<uint8_t, static_cast<size_t>(WheelButton::Count)> button_states{};
 
     // FFB State
-    float ffb_gain = 1.0f;
+    float ffb_gain = 1.0f; 
     float ffb_offset = 0.0f;
     float ffb_velocity = 0.0f;
     int16_t ffb_force = 0;
-    int16_t ffb_autocenter = 1024; // Default center spring
+    int16_t ffb_autocenter = 0; // Linux default match (was 4096)
 };
 
 

@@ -65,6 +65,7 @@ private:
 #ifdef _WIN32
     std::unordered_set<int> active_keys;
     int accumulated_mouse_dx = 0;
+    bool toggle_latch_ = false;
 #endif
 
 private:
