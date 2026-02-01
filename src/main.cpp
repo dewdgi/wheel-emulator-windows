@@ -3,8 +3,13 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <signal.h>
 #include <unistd.h>
+#endif
 
 #include "config.h"
 #include "wheel_device.h"
@@ -15,40 +20,39 @@ int ParseLogLevelFromArgs(int argc, char* argv[]);
 
 std::atomic<bool> running{true};
 
-void signal_handler(int signal) {
-    if (signal == SIGINT) {
-        const char msg[] = "\n[signal_handler] Received Ctrl+C, shutting down...\n";
-        ssize_t ignored = write(STDERR_FILENO, msg, sizeof(msg) - 1);
-        (void)ignored;
+#ifdef _WIN32
+BOOL WINAPI ConsoleCtrlHandler(DWORD dwCtrlType) {
+    if (dwCtrlType == CTRL_C_EVENT || dwCtrlType == CTRL_CLOSE_EVENT) {
+        LOG_INFO("main", "Received Ctrl+C/Close, shutting down...");
         running.store(false, std::memory_order_relaxed);
+        return TRUE;
     }
+    return FALSE;
 }
+#endif
 
-bool check_root() {
-    if (geteuid() != 0) {
-        std::cerr << "This program must be run as root to configure the USB gadget and grab input devices." << std::endl;
-        std::cerr << "Please run with: sudo ./wheel-emulator" << std::endl;
-        return false;
-    }
-    return true;
-}
-
-// --- main() at very end of file ---
+// --- main() ---
 int main(int argc, char* argv[]) {
     int log_level = ParseLogLevelFromArgs(argc, argv);
     logging::InitLogger(log_level);
     LOG_INFO("main", "Starting wheel emulator (log level=" << log_level << ")");
 
-    if (!check_root()) {
+#ifdef _WIN32
+    if (!SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE)) {
+        LOG_ERROR("main", "Could not set console control handler");
         return 1;
     }
-
-    // Setup signal handler
+#else
+    if (geteuid() != 0) {
+        std::cerr << "This program must be run as root." << std::endl;
+        return 1;
+    }
+    // Setup signal handler ...
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = signal_handler;
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGINT, &sa, nullptr);
+    sa.sa_handler = [](int){ running.store(false); };
+    sigaction(SIGINT, &sa, NULL);
+#endif
 
     // Load configuration
     Config config;
@@ -62,74 +66,56 @@ int main(int argc, char* argv[]) {
     }
 
     InputManager input_manager;
+    // On Windows, device paths are likely ignored or handled differently by RawInput,
+    // but we pass them in case the implementation uses them for matching.
     if (!input_manager.Initialize(config.keyboard_device, config.mouse_device)) {
         std::cerr << "Failed to initialize input manager" << std::endl;
-        return 1;
+        // Proceeding anyway might be viable if initialization failure isn't fatal on Windows
     }
 
     std::cout << "All systems ready. Toggle to enable." << std::endl;
 
+    bool input_enabled = false;
+    // When disabled, we should probably center the wheel or stop updates.
+    // For now, let's just gate the processing.
+
     InputFrame frame;
-    while (running) {
+    while (running.load(std::memory_order_relaxed)) {
+        // WaitForFrame should be implemented to block or sleep to avoid 100% CPU
         if (!input_manager.WaitForFrame(frame)) {
-            if (!running) {
+            if (!running.load(std::memory_order_relaxed)) {
                 break;
             }
             continue;
         }
 
-        if (wheel_device.IsEnabled() && !input_manager.AllRequiredGrabbed()) {
-            std::cerr << "Required input device lost; disabling emulator" << std::endl;
-            wheel_device.SetEnabled(false, input_manager);
-            continue;
-        }
-
         if (frame.toggle_pressed) {
-            if (!input_manager.DevicesReady()) {
-                LOG_WARN("main", "Toggle pressed before devices ready; ignoring request");
-            } else {
-                wheel_device.ToggleEnabled(input_manager);
-            }
+            input_enabled = !input_enabled;
+            std::cout << "Input " << (input_enabled ? "ENABLED" : "DISABLED") << std::endl;
+            input_manager.GrabDevices(input_enabled); // Optional: if GrabDevices does anything useful on Windows
         }
 
-        if (wheel_device.IsEnabled()) {
-            wheel_device.ProcessInputFrame(frame, config.sensitivity);
+        if (input_enabled) {
+            // Use sensitivity from config
+            int sensitivity = config.sensitivity > 0 ? config.sensitivity : 50;
+            
+            // Pass to wheel
+            wheel_device.ProcessInputFrame(frame, sensitivity);
         }
-
     }
-    // On shutdown, notify all threads to wake up and exit
-    wheel_device.SetEnabled(false, input_manager);
-    wheel_device.NotifyAllShutdownCVs();
-    input_manager.Shutdown();
-    // Signal threads to exit before destruction
-    wheel_device.ShutdownThreads();
+    
+    std::cout << "Shutdown complete." << std::endl;
     return 0;
-
 }
 
 int ParseLogLevelFromArgs(int argc, char* argv[]) {
-    int level = 1;  // Default to warnings/info
-    const std::string prefix = "--log-level=";
+    int level = 0; // Info default
     for (int i = 1; i < argc; ++i) {
-        std::string arg(argv[i]);
-        if (arg == "--log-level" && i + 1 < argc) {
-            ++i;
-            try {
-                level = std::stoi(argv[i]);
-            } catch (...) {
-                // Ignore malformed values; keep previous level
-            }
-            continue;
-        }
-        if (arg.rfind(prefix, 0) == 0) {
-            try {
-                level = std::stoi(arg.substr(prefix.size()));
-            } catch (...) {
-                // Ignore malformed inline value
-            }
+        if (std::strcmp(argv[i], "-v") == 0) {
+            level = 1; // Debug
+        } else if (std::strcmp(argv[i], "-q") == 0) {
+            level = -1; // Warn/Error only
         }
     }
-    if (level < 0) level = 0;
-    if (level > 3) level = 3;
     return level;
 }

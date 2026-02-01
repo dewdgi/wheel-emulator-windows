@@ -1,6 +1,6 @@
 #include "input_manager.h"
 
-#include <linux/input-event-codes.h>
+#include "../input_defs.h"
 
 #include <atomic>
 #include <chrono>

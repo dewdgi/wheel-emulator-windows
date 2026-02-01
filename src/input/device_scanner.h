@@ -2,13 +2,18 @@
 #ifndef DEVICE_SCANNER_H
 #define DEVICE_SCANNER_H
 
-#include <linux/input.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
+#include "../input_defs.h"
+
 #include <string>
 #include <vector>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
+#include <unordered_set>
 
 #include "device_enumerator.h"
 
@@ -20,6 +25,14 @@ public:
     void NotifyInputChanged();
     void Read();
     bool WaitForEvents(int timeout_ms);
+    
+#ifdef _WIN32
+    // Windows internal state helpers
+    void UpdateKeyState(int linux_code, bool pressed);
+    void UpdateMouseState(int dx);
+    struct InputEvent { int code; int value; }; // Mock for internal usage if needed
+#endif
+
 public:
     DeviceScanner();
     ~DeviceScanner();
@@ -47,6 +60,12 @@ public:
     bool HasGrabbedMouse() const;
     bool AllRequiredGrabbed() const;
     bool HasRequiredDevices() const;
+
+private:
+#ifdef _WIN32
+    std::unordered_set<int> active_keys;
+    int accumulated_mouse_dx = 0;
+#endif
 
 private:
     struct DeviceHandle {

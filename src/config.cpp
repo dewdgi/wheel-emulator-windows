@@ -5,12 +5,13 @@
 #include <cstdlib>
 #include <vector>
 #include <sys/stat.h>
-#include <unistd.h>
-#include <linux/input-event-codes.h>
+
+#include "input_defs.h"
 
 bool Config::Load() {
-    // Only use system config at /etc/wheel-emulator.conf
-    const char* system_config = "/etc/wheel-emulator.conf";
+    // Windows config path: local directory
+    const char* system_config = "./wheel-emulator.conf";
+
     if (LoadFromFile(system_config)) {
         std::cout << "Loaded config from: " << system_config << std::endl;
         return true;
