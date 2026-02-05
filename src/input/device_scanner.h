@@ -66,6 +66,10 @@ private:
     std::unordered_set<int> active_keys;
     int accumulated_mouse_dx = 0;
     bool toggle_latch_ = false;
+    bool cursor_locked_ = false;
+    POINT saved_cursor_pos_ = {0, 0};
+    void LockCursor();
+    void UnlockCursor();
 #endif
 
 private:

@@ -245,6 +245,7 @@ DeviceScanner::DeviceScanner() : enumerator_([](std::vector<std::string>&&, bool
 }
 
 DeviceScanner::~DeviceScanner() {
+    UnlockCursor();
     if (g_backend) {
         delete g_backend;
         g_backend = nullptr;
@@ -342,9 +343,53 @@ bool DeviceScanner::IsKeyPressed(int keycode) const {
     return active_keys.find(keycode) != active_keys.end();
 }
 
-// Stubbed Grab logic for now
-bool DeviceScanner::Grab(bool enable) { return true; }
-void DeviceScanner::ResyncKeyStates() { } 
+bool DeviceScanner::Grab(bool enable) {
+    if (enable) {
+        LockCursor();
+    } else {
+        UnlockCursor();
+    }
+    return true;
+}
+
+void DeviceScanner::LockCursor() {
+    if (cursor_locked_) return;
+
+    // Save current cursor position so we can restore it later
+    GetCursorPos(&saved_cursor_pos_);
+
+    // Clip cursor to a 1x1 rect at its current position — it cannot move
+    RECT clip;
+    clip.left   = saved_cursor_pos_.x;
+    clip.top    = saved_cursor_pos_.y;
+    clip.right  = saved_cursor_pos_.x + 1;
+    clip.bottom = saved_cursor_pos_.y + 1;
+    ClipCursor(&clip);
+
+    // Hide the cursor (ShowCursor is ref-counted: one call to hide)
+    while (ShowCursor(FALSE) >= 0) {}
+
+    cursor_locked_ = true;
+    LOG_INFO(kTag, "Cursor locked at (" << saved_cursor_pos_.x << ", " << saved_cursor_pos_.y << ")");
+}
+
+void DeviceScanner::UnlockCursor() {
+    if (!cursor_locked_) return;
+
+    // Remove the clip constraint
+    ClipCursor(NULL);
+
+    // Restore cursor position to where it was before the lock
+    SetCursorPos(saved_cursor_pos_.x, saved_cursor_pos_.y);
+
+    // Show the cursor again (undo the hide)
+    while (ShowCursor(TRUE) < 0) {}
+
+    cursor_locked_ = false;
+    LOG_INFO(kTag, "Cursor unlocked");
+}
+
+void DeviceScanner::ResyncKeyStates() { }
 
 // Check toggle: Ctrl + M with Latch for Single Event logic
 bool DeviceScanner::CheckToggle() {
