@@ -78,5 +78,6 @@ The vJoy SDK headers are included in `src/vjoy_sdk/` and `vJoyInterface.dll` is 
 
 ## License
 
-Open Source (MIT).
-This project uses the vJoy SDK (Public Domain/MIT).
+MIT License. See [LICENSE](LICENSE).
+
+This project uses the [vJoy](https://github.com/shauleiz/vJoy) SDK (MIT). See [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).

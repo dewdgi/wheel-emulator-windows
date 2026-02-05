@@ -66,7 +66,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::cout << "All systems ready. Toggle to enable." << std::endl;
+    std::cout << "All systems ready. Press Ctrl+M to enable." << std::endl;
     // Force enable on start for testing if desired? No, stick to toggle.
 
     InputFrame frame;
