@@ -23,8 +23,8 @@ For the internals, check [`logics.md`](logics.md).
 
 ## How to Run
 
-1.  Download `wheel-emulator.exe` from Releases.
-2.  Run `wheel-emulator.exe`.
+1.  Download `wheel-emulator.exe` from [Releases](https://github.com/dewdgi/wheel-hid-emulator/releases).
+2.  Run `wheel-emulator.exe`. No installation needed — it's a single portable file.
 3.  **In-Game:**
     -   Bind Steering to vJoy Axis X.
     -   Bind Throttle/Brake/Clutch to vJoy Axes (usually Y/Z/Rz).
