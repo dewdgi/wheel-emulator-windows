@@ -1,37 +1,15 @@
-# Wheel HID Emulator (Windows Port)
+# Wheel HID Emulator
 
-**Turn your keyboard and mouse into a virtual Logitech G29 racing wheel.**
+**Keyboard + mouse as a Logitech G29 racing wheel with Force Feedback.**
 
-This program emulates a steering wheel on Windows using the **vJoy** driver. It enables Force Feedback (FFB) support in games like *Assetto Corsa*, *Euro Truck Simulator 2*, *Forza*, etc., using just a mouse.
+## Requirements
 
-For the internals, check [`logics.md`](logics.md).
-
-## Features
-
--   **Mouse Steering:** Precise 1:1 mouse-to-wheel mapping with sensitivity control.
--   **Force Feedback:** The mouse pointer resists movement based on game physics (springs, bumps, curbs, drifting).
--   **Single Portable Executable:** No installation required (other than vJoy).
--   **Logitech G29 Emulation:** Recognized as a real wheel by most games.
-
-## Prerequisites
-
-1.  **vJoy Driver** (v2.1.9 or later) installed.
-2.  Configure vJoy Device 1 (using `Configure vJoy` app):
-    -   **Axes:** X, Y, Z, Rx, Rz (All enabled)
-    -   **Buttons:** 12 or more
-    -   **FFB Effects:** Enable "Constant Force", "Ramp", "Spring", etc.
+- [vJoy Driver](https://github.com/jshafer817/vJoy/releases) installed
 
 ## How to Run
 
-1.  Download `wheel-emulator.exe` from [Releases](https://github.com/dewdgi/wheel-hid-emulator/releases).
-2.  Run `wheel-emulator.exe`. No installation needed — it's a single portable file.
-3.  **In-Game:**
-    -   Bind Steering to vJoy Axis X.
-    -   Bind Throttle/Brake/Clutch to vJoy Axes (usually Y/Z/Rz).
-4.  **Toggle Emulation:** Press **Ctrl + M**.
-    -   The mouse cursor will hide/lock.
-    -   Move the mouse to steer.
-    -   Press **Ctrl + M** again to release the mouse.
+1. Download `wheel-emulator.exe` from [Releases](https://github.com/dewdgi/wheel-hid-emulator/releases).
+2. Run it. Press **Ctrl + M** to toggle emulation.
 
 ## Controls
 
@@ -44,40 +22,34 @@ For the internals, check [`logics.md`](logics.md).
 | **D-Pad** | Arrows | Hat Switch |
 
 **Buttons:**
-`Q, E, F, G, H, R, T, Y` ... map to Buttons 1-8.
-See source code or experiment in `joy.cpl` to find all mappings.
+`Q, E, F, G, H, R, T, Y` map to Buttons 1-8.
 
-## Configuration (`wheel-emulator.conf`)
+## Configuration
 
-The program looks for `wheel-emulator.conf` in the same directory. If missing, it uses defaults.
+`wheel-emulator.conf` (auto-generated if missing):
 
 ```ini
 [sensitivity]
-sensitivity=50    # 1-100. Higher = faster steering response.
+sensitivity=50    # 1-100. Higher = faster steering.
 
 [ffb]
-gain=1.0          # 0.1-4.0. Force Feedback strength multiplier.
+gain=1.0          # 0.1-4.0. Force Feedback strength.
 ```
 
 ## Building from Source
 
-**Requirements:**
--   **MinGW-w64** (g++) added to PATH.
+Requires **MinGW-w64** (g++) on PATH.
 
-**Build:**
-Run `build_with_g++.bat`. It produces a single portable `wheel-emulator.exe` (~1.6 MB).
-The vJoy SDK headers are included in `src/vjoy_sdk/` and `vJoyInterface.dll` is embedded in the executable at build time — no external DLLs needed.
-
-## Troubleshooting
-
--   **"vJoy not enabled":** Install vJoy and ensure Device 1 is active.
--   **FFB feels wrong:**
-    -   In-Game: Invert FFB if the wheel pulls to the side instead of centering.
-    -   Conf: Adjust `gain` in `wheel-emulator.conf`.
--   **Mouse jitters:** Lower the game's FFB update rate or reduce `sensitivity`.
+```
+build_with_g++.bat
+```
 
 ## License
 
-MIT License. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
 
-This project uses the [vJoy](https://github.com/shauleiz/vJoy) SDK (MIT). See [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
+Uses [vJoy](https://github.com/shauleiz/vJoy) SDK (MIT). See [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
+
+---
+
+Architecture details: [`logics.md`](logics.md)
