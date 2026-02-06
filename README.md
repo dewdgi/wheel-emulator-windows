@@ -8,7 +8,7 @@
 
 ## How to Run
 
-1. Download `wheel-emulator.exe` from [Releases](https://github.com/dewdgi/wheel-hid-emulator/releases).
+1. Download `wheel-emulator.exe` from [Releases](https://github.com/dewdgi/wheel-emulator-windows/releases).
 2. Run it. Press **Ctrl + M** to toggle emulation.
 
 ## Controls
@@ -51,5 +51,7 @@ MIT. See [LICENSE](LICENSE).
 Uses [vJoy](https://github.com/shauleiz/vJoy) SDK (MIT). See [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
 
 ---
+
+Most of this code was written with heavy use of AI.
 
 Architecture details: [`logics.md`](logics.md)
