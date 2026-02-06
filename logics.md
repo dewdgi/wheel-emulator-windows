@@ -1,6 +1,6 @@
 ## Wheel HID Emulator — Architecture & Logic
 
-Windows-only steering wheel emulator using vJoy. Turns keyboard + mouse into a virtual Logitech G29.
+Windows-only steering wheel emulator using vJoy. Turns keyboard + mouse into a virtual steering wheel with Force Feedback.
 
 ---
 

@@ -1,6 +1,6 @@
 # Wheel HID Emulator
 
-**Keyboard + mouse as a Logitech G29 racing wheel with Force Feedback.**
+**Keyboard + mouse as a virtual steering wheel with Force Feedback.**
 
 ## Requirements
 
